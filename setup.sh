@@ -64,7 +64,8 @@ bold "4/6  API"
 # "script" keeps wrangler interactive (it may ask you to pick a workers.dev name) while saving its output.
 DEPLOY_LOG="$(mktemp)"
 script -q "$DEPLOY_LOG" npx wrangler deploy
-API_URL="$(grep -oE 'https://[A-Za-z0-9.-]+\.workers\.dev' "$DEPLOY_LOG" | head -1)"
+WORKER_NAME="$(sed -nE 's/^name = "(.*)"/\1/p' wrangler.toml | head -1)"
+API_URL="$(grep -oE "https://$WORKER_NAME\.[A-Za-z0-9.-]+\.workers\.dev" "$DEPLOY_LOG" | head -1)"
 rm -f "$DEPLOY_LOG"
 [ -n "$API_URL" ] || fail "The API deployed, but I couldn't find its address above. Copy the https://…workers.dev address into web/config.js."
 echo "API is live at $API_URL"
