@@ -1,0 +1,4 @@
+# For running the API on your Mac (npm run dev). Copy this file to .dev.vars.
+# Passkeys only work from the address the API expects, so local testing uses localhost.
+APP_ORIGIN=http://localhost:8788
+RP_ID=localhost

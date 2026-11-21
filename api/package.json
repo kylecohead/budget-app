@@ -1,0 +1,16 @@
+{
+  "name": "budget-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "db:local": "wrangler d1 execute budget-db --local --file=schema.sql",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "14.1.0"
+  },
+  "devDependencies": {
+    "wrangler": "4.166.0"
+  }
+}

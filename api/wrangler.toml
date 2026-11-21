@@ -1,0 +1,21 @@
+# Cloudflare Worker settings for the Budget API.
+# setup.sh fills in database_id, APP_ORIGIN and RP_ID for you.
+
+name = "budget-api"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# Where the web app lives (GitHub Pages). Passkeys only work from this address.
+APP_ORIGIN = "https://kylecohead.github.io"
+RP_ID = "kylecohead.github.io"
+RP_NAME = "Budget"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "budget-db"
+database_id = "c36cc3aa-bcdf-41ef-b654-be370206e903"
+
+[observability]
+enabled = true
