@@ -56,7 +56,7 @@ const icon = (name, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria
 
 const CURRENCIES = ['ZAR', 'USD', 'EUR', 'GBP', 'AUD', 'CAD', 'CHF', 'NZD', 'JPY', 'CNY', 'HKD', 'SGD', 'SEK', 'NOK',
   'DKK', 'PLN', 'CZK', 'HUF', 'ILS', 'INR', 'MXN', 'BRL', 'KRW', 'THB', 'TRY', 'MYR', 'IDR', 'PHP', 'ISK', 'RON', 'BGN'];
-const SYMBOL = { ZAR: 'R ', USD: '$', EUR: '€', GBP: '£', AUD: 'A$', CAD: 'C$', NZD: 'NZ$', JPY: '¥', CNY: '¥', HKD: 'HK$', SGD: 'S$', INR: '₹' };
+const SYMBOL = { ZAR: 'R', USD: '$', EUR: '€', GBP: '£', AUD: 'A$', CAD: 'C$', NZD: 'NZ$', JPY: '¥', CNY: '¥', HKD: 'HK$', SGD: 'S$', INR: '₹' };
 const SPACE_GROUPED = ['ZAR', 'SEK', 'NOK', 'DKK', 'PLN', 'CZK', 'HUF', 'CHF'];
 
 // 1328050 → "R 13 280.50"; whole amounts drop the cents unless asked.
@@ -69,8 +69,8 @@ function money(minor, cur, { cents = 'auto', sign = false } = {}) {
   const sep = SPACE_GROUPED.includes(cur) ? ' ' : ',';
   let s = String(whole).replace(/\B(?=(\d{3})+(?!\d))/g, sep);
   if (showCents) s += '.' + String(abs % 100).padStart(2, '0');
-  const sym = SYMBOL[cur] ?? cur + ' ';
-  return (neg ? '−' : sign ? '+' : '') + sym + s;
+  const sym = SYMBOL[cur] ?? cur;
+  return (neg ? '−' : sign ? '+' : '') + sym + '\u00a0' + s; // same gap after every symbol: R 412, $ 38.20
 }
 
 function parseMoney(input) {
@@ -498,13 +498,10 @@ function overviewView() {
   if (txs === null) {
     html += `<div class="empty"><p>Loading this month…</p></div>`;
   } else {
+    if (!txs.length) {
+      html += `<div class="empty"><strong>Nothing yet in ${esc(monthShort(S.ym))}</strong><p>Pay with Apple Pay and pick a category, or tap + to add a payment, income or transfer.</p></div>`;
+    }
     html += categoryTiles(sum, cur);
-    const latest = sum.latest.slice(0, 3);
-    html += `<section class="section" aria-label="Latest">
-      <div class="section-head"><h2 class="h2">Latest</h2>${latest.length ? '<a class="link" href="#activity">See all</a>' : ''}</div>
-      ${latest.length ? `<ul class="list">${latest.map(txRow).join('')}</ul>`
-        : `<div class="empty"><strong>Nothing yet in ${esc(monthShort(S.ym))}</strong><p>Pay with Apple Pay and pick a category, or tap + to add a payment, income or transfer.</p></div>`}
-    </section>`;
   }
   return html;
 }
@@ -624,12 +621,21 @@ function activityView() {
   else if (f.kind !== 'all') rows = rows.filter((t) => t.kind === f.kind);
   if (f.category) rows = rows.filter((t) => t.category_id === f.category);
   const cat = f.category ? categoryById(f.category) : null;
-  const filters = [['all', 'All'], ['needs', 'Needs a category'], ['expense', 'Spending'], ['income', 'Income'], ['transfer', 'Transfers']];
+  const base = (txs || []).filter((t) => S.account === 'total' || t.account_id === S.account || t.to_account_id === S.account);
+  const count = {
+    all: base.length,
+    needs: base.filter((t) => t.kind === 'expense' && (!t.category_id || (t.source === 'wallet' && !t.account_id))).length,
+    expense: base.filter((t) => t.kind === 'expense').length,
+    income: base.filter((t) => t.kind === 'income').length,
+    transfer: base.filter((t) => t.kind === 'transfer').length,
+  };
+  const filters = [['all', 'Everything'], ['needs', 'Needs a category'], ['expense', 'Spending'], ['income', 'Income'], ['transfer', 'Transfers']];
   let html = monthBar() + accountChips();
-  html += `<nav class="chips" aria-label="Filter">
-    ${cat ? `<button class="chip small" data-action="clear-cat" aria-pressed="true">${esc(cat.name)} ${icon('close', 's')}<span class="sr">Remove filter</span></button>` : ''}
-    ${filters.map(([k, l]) => `<button class="chip small" data-action="filter" data-kind="${k}" aria-pressed="${f.kind === k && !cat}">${l}</button>`).join('')}
-  </nav>`;
+  html += `<div class="filter-row">
+    <label class="menu-select"><span class="sr">Show</span>
+      <select data-change="filter">${filters.map(([k, l]) => `<option value="${k}" ${f.kind === k ? 'selected' : ''}>${l} (${count[k]})</option>`).join('')}</select></label>
+    ${cat ? `<button class="chip" data-action="clear-cat" aria-pressed="true">${esc(cat.name)} ${icon('close', 's')}<span class="sr">Remove filter</span></button>` : ''}
+  </div>`;
   if (txs === null) return html + '<div class="empty"><p>Loading…</p></div>';
   if (!rows.length) {
     return html + `<div class="empty"><strong>Nothing here</strong><p>${f.kind === 'needs' ? 'Every payment has a category. Nice.' : 'No payments match. Try another month or filter.'}</p></div>`;
@@ -1117,7 +1123,7 @@ const actions = {
     try { await api('/api/me', { method: 'PATCH', body: { display_currency: S.cur } }); S.boot.user.display_currency = S.cur; local.set('b.boot', S.boot); } catch { /* keeps working locally */ }
   },
   review: () => openReview(),
-  'cat-activity': (btn) => { S.filter = { kind: 'all', category: btn.dataset.id }; location.hash = '#activity'; },
+  'cat-activity': (btn) => { S.filter = { kind: 'expense', category: btn.dataset.id }; location.hash = '#activity'; },
   filter: (btn) => { S.filter = { kind: btn.dataset.kind, category: null }; render(); },
   'clear-cat': () => { S.filter.category = null; render(); },
   add: () => openEditor(null),
@@ -1190,6 +1196,7 @@ document.addEventListener('change', async (ev) => {
     S.edit[t.dataset.edit] = t.value;
     if (S.edit.type === 'account' && t.dataset.edit === 'currency') renderAccount();
   }
+  if (t.dataset.change === 'filter') { S.filter.kind = t.value; render(); return; }
   if (t.dataset.change === 'display-currency') {
     try { await api('/api/me', { method: 'PATCH', body: { display_currency: t.value } }); S.boot.user.display_currency = t.value; S.cur = t.value; local.set('b.boot', S.boot); toast('Saved'); } catch (e) { toast(e.message); }
   }
