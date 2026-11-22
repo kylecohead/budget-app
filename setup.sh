@@ -56,6 +56,10 @@ fi
 sed -i '' -e "s|^database_id = .*|database_id = \"$DB_ID\"|" \
           -e "s|^APP_ORIGIN = .*|APP_ORIGIN = \"$APP_ORIGIN\"|" \
           -e "s|^RP_ID = .*|RP_ID = \"$PAGES_HOST\"|" wrangler.toml
+grep -q '^APP_URL = ' wrangler.toml || sed -i '' -e "/^APP_ORIGIN = /a\\
+APP_URL = \"\"
+" wrangler.toml
+sed -i '' -e "s|^APP_URL = .*|APP_URL = \"$APP_URL\"|" wrangler.toml
 npx wrangler d1 execute budget-db --remote --yes --file=schema.sql >/dev/null
 echo "Database ready."
 

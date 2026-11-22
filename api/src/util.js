@@ -152,3 +152,14 @@ export function toInt(value) {
   const n = Number(value);
   return Number.isFinite(n) ? Math.round(n) : null;
 }
+
+const SYMBOL = { ZAR: 'R', USD: '$', EUR: '€', GBP: '£', AUD: 'A$', CAD: 'C$', NZD: 'NZ$', JPY: '¥', INR: '₹' };
+const SPACE_GROUPED = ['ZAR', 'SEK', 'NOK', 'DKK', 'PLN', 'CZK', 'HUF', 'CHF'];
+
+// 12000 → "R 120.00" (same style as the app)
+export function formatMoney(minor, cur) {
+  const abs = Math.abs(Math.round(minor || 0));
+  const sep = SPACE_GROUPED.includes(cur) ? ' ' : ',';
+  const whole = String(Math.floor(abs / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, sep);
+  return (minor < 0 ? '−' : '') + (SYMBOL[cur] || cur) + ' ' + whole + '.' + String(abs % 100).padStart(2, '0');
+}

@@ -9,6 +9,8 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 # Where the web app lives (GitHub Pages). Passkeys only work from this address.
 APP_ORIGIN = "https://kylecohead.github.io"
+# The app's full address, used for the "Edit details…" link from the Apple Pay pop-up.
+APP_URL = "https://kylecohead.github.io/budget-app/"
 RP_ID = "kylecohead.github.io"
 RP_NAME = "Budget"
 

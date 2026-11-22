@@ -176,6 +176,18 @@ h1, h2, h3 { margin: 0; }
 .tile.over { background: var(--over); color: var(--on-over); }
 .tile.over .of { color: var(--on-over); }
 
+/* ---------- new card question ---------- */
+.newcard { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: var(--r-lg); background: var(--card); border: 1px solid color-mix(in srgb, var(--brand-text) 35%, transparent); }
+.newcard-top { display: flex; gap: 12px; align-items: center; }
+.newcard .ico { width: 40px; height: 40px; border-radius: 20px; background: var(--fill); display: grid; place-items: center; flex: none; }
+.newcard .grow { display: flex; flex-direction: column; }
+.newcard b { font-size: 15px; line-height: 20px; }
+.newcard small { font-size: 13px; line-height: 18px; color: var(--text-2); }
+.newcard .btn { min-height: 44px; font-size: 15px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.done-mark { width: 72px; height: 72px; border-radius: 36px; background: var(--brand); color: var(--on-brand); display: grid; place-items: center; }
+.done-mark.bad { background: var(--over); color: var(--on-over); }
+
 /* ---------- filter menu ---------- */
 .filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .menu-select { position: relative; display: inline-flex; }

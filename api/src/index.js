@@ -1,7 +1,7 @@
 // Budget API — runs on Cloudflare Workers with a D1 database.
 import {
   HttpError, json, text, readJson, now, newId, randomToken, sha256, inviteCode,
-  cleanCurrency, cleanText, parseAmount, merchantKey, toInt,
+  cleanCurrency, cleanText, parseAmount, toInt, formatMoney,
 } from './util.js';
 import {
   registerOptions, registerVerify, loginOptions, loginVerify, logout,
@@ -57,6 +57,14 @@ async function route(request, env, url) {
     }
   }
 
+  // "Edit details…" page: works from the one-time link, without signing in
+  if (parts[0] === 'e' && parts.length === 2 && method === 'POST') {
+    const body = await readJson(request);
+    if (parts[1] === 'load') return editLoad(env, body);
+    if (parts[1] === 'save') return editSave(env, body);
+    if (parts[1] === 'delete') return editDelete(env, body);
+  }
+
   if (parts[0] === 'auth' && method === 'POST') {
     const body = await readJson(request);
     if (path === '/auth/register/options') return registerOptions(request, env, body);
@@ -85,7 +93,9 @@ async function route(request, env, url) {
       case 'POST transactions': return createTransaction(env, user, body);
       case 'PATCH transactions/:id': return updateTransaction(env, user, id, body);
       case 'DELETE transactions/:id': return deleteTransaction(env, user, id);
+      case 'GET shortcut-key': return getShortcutKey(env, user);
       case 'POST shortcut-key': return newShortcutKey(env, user);
+      case 'POST cards': return assignCardRoute(env, user, body);
       case 'GET invites': return listInvites(env, user);
       case 'POST invites': return createInvite(env, user);
       case 'GET rates': return json(await getRates(env));
@@ -129,7 +139,7 @@ async function updateMe(env, user, body) {
 }
 
 async function deleteMe(env, user) {
-  const tables = ['transactions', 'budgets', 'merchant_memory', 'accounts', 'categories', 'sessions', 'credentials'];
+  const tables = ['transactions', 'budgets', 'merchant_memory', 'edit_tokens', 'shortcut_links', 'accounts', 'categories', 'sessions', 'credentials'];
   await env.DB.batch([
     ...tables.map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(user.id)),
     env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id),
@@ -244,21 +254,24 @@ async function listTransactions(env, user, url) {
   return json({ transactions: rows.results });
 }
 
-async function rememberMerchant(env, user, merchant, categoryId) {
-  const key = merchantKey(merchant);
-  if (!key || !categoryId) return;
-  await env.DB.prepare(
-    `INSERT INTO merchant_memory (user_id, merchant_key, category_id, updated_at) VALUES (?, ?, ?, ?)
-     ON CONFLICT (user_id, merchant_key) DO UPDATE SET category_id = excluded.category_id, updated_at = excluded.updated_at`,
-  ).bind(user.id, key, categoryId, now()).run();
-}
-
-async function learnCard(env, account, card) {
+// A Wallet card belongs to one account: remember it, and file its other unassigned payments there too.
+async function assignCard(env, user, account, card) {
   if (!account || !card) return;
   const cards = JSON.parse(account.cards || '[]');
-  if (cards.some((c) => c.toLowerCase() === card.toLowerCase())) return;
-  cards.push(card);
-  await env.DB.prepare('UPDATE accounts SET cards = ? WHERE id = ?').bind(JSON.stringify(cards.slice(-20)), account.id).run();
+  if (!cards.some((c) => c.toLowerCase() === card.toLowerCase())) {
+    cards.push(card);
+    await env.DB.prepare('UPDATE accounts SET cards = ? WHERE id = ?').bind(JSON.stringify(cards.slice(-20)), account.id).run();
+  }
+  await env.DB.prepare('UPDATE transactions SET account_id = ?, updated_at = ? WHERE user_id = ? AND account_id IS NULL AND lower(card) = lower(?)')
+    .bind(account.id, now(), user.id, card).run();
+}
+
+async function assignCardRoute(env, user, body) {
+  const account = await ownAccount(env, user, body.account_id);
+  const card = cleanText(body.card, 80);
+  if (!account || !card) throw new HttpError(400, 'Choose an account for this card.');
+  await assignCard(env, user, account, card);
+  return json({ ok: true });
 }
 
 async function cleanTransaction(env, user, body, existing = {}) {
@@ -316,7 +329,6 @@ async function createTransaction(env, user, body) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?)`,
   ).bind(id, user.id, t.kind, t.account_id, t.to_account_id, t.amount, t.currency, t.to_amount, t.to_currency,
     t.category_id, t.merchant, t.note, t.occurred_at, ts, ts).run();
-  if (t.category_id && t.merchant) await rememberMerchant(env, user, t.merchant, t.category_id);
   return json({ transaction: { id, ...t, source: 'manual', created_at: ts } });
 }
 
@@ -331,8 +343,7 @@ async function updateTransaction(env, user, id, body) {
      WHERE id = ?`,
   ).bind(t.kind, t.account_id, t.to_account_id, t.amount, t.currency, t.to_amount, t.to_currency, t.category_id,
     t.merchant, t.note, original, t.occurred_at, now(), id).run();
-  if (t.category_id && t.category_id !== existing.category_id && t.merchant) await rememberMerchant(env, user, t.merchant, t.category_id);
-  if (account && existing.card && account.id !== existing.account_id) await learnCard(env, account, existing.card);
+  if (account && existing.card && account.id !== existing.account_id) await assignCard(env, user, account, existing.card);
   return json({ transaction: { ...existing, ...t, original_amount: original } });
 }
 
@@ -343,9 +354,18 @@ async function deleteTransaction(env, user, id) {
 
 // ---------- Shortcut link, invites ----------
 
+async function getShortcutKey(env, user) {
+  const key = await env.DB.prepare('SELECT key FROM shortcut_links WHERE user_id = ?').bind(user.id).first('key');
+  return json({ key: key || null });
+}
+
 async function newShortcutKey(env, user) {
   const key = 'k_' + randomToken(24);
-  await env.DB.prepare('UPDATE users SET shortcut_key_hash = ? WHERE id = ?').bind(await sha256(key), user.id).run();
+  await env.DB.batch([
+    env.DB.prepare('UPDATE users SET shortcut_key_hash = ? WHERE id = ?').bind(await sha256(key), user.id),
+    env.DB.prepare('INSERT INTO shortcut_links (user_id, key, created_at) VALUES (?, ?, ?) ON CONFLICT (user_id) DO UPDATE SET key = excluded.key, created_at = excluded.created_at')
+      .bind(user.id, key, now()),
+  ]);
   return json({ key });
 }
 
@@ -393,24 +413,21 @@ async function getRates(env) {
 
 // ---------- the Apple Pay Shortcut ----------
 //
-// The Shortcut posts three kinds of message to /w/<key>:
-//   1. { amount, merchant, card }  → saves the payment, replies with the menu (a JSON list)
-//   2. { choice }                  → applies the menu choice; replies "" when done, or a
-//                                    question ("New amount" / "Note") when it needs an answer
-//   3. { answer }                  → applies the answer, replies with the category list
+// The Shortcut posts two kinds of message to /w/<key>:
+//   1. { amount, merchant, card }  → saves the payment, replies { title, items } for the pop-up
+//   2. { choice }                  → applies the tap: a category saves it; "→ Edit or don't log…" replies
+//                                    with a one-time link to the edit page, which the Shortcut opens.
 // Anything unexpected replies "" so the Shortcut simply ends; the payment stays in the app.
 
-const CHANGE_AMOUNT = 'Change amount…';
-const ADD_NOTE = 'Add a note…';
-const DONT_LOG = 'Don’t log this';
-const USUAL = ' (usual)';
+const EDIT = '→ Edit or don’t log…';
+const DONT_LOG = 'Don’t log this'; // older Shortcuts only
+const EDIT_MINUTES = 30;
 
 async function wallet(request, env, key) {
   const user = await userFromShortcutKey(env, key);
-  if (!user) return text('This Shortcut link isn’t valid any more. Copy a new one from the app’s Settings.', 401);
+  if (!user) return text('This Shortcut link isn’t valid any more. Copy the new one from the app’s Settings.', 401);
   const body = await readJson(request);
   if (body.choice !== undefined) return walletChoice(env, user, body.choice);
-  if (body.answer !== undefined) return walletAnswer(env, user, body.answer);
   return walletPayment(env, user, body);
 }
 
@@ -419,19 +436,6 @@ async function expenseCategories(env, user) {
     "SELECT * FROM categories WHERE user_id = ? AND kind = 'expense' AND archived = 0 ORDER BY sort",
   ).bind(user.id).all();
   return rows.results;
-}
-
-async function menuFor(env, user, merchant, { extras, amountMissing }) {
-  const cats = await expenseCategories(env, user);
-  const key = merchantKey(merchant);
-  const usual = key
-    ? await env.DB.prepare('SELECT category_id FROM merchant_memory WHERE user_id = ? AND merchant_key = ?').bind(user.id, key).first('category_id')
-    : null;
-  const usualCat = cats.find((c) => c.id === usual);
-  const names = cats.filter((c) => c !== usualCat).map((c) => c.name);
-  const items = usualCat ? [usualCat.name + USUAL, ...names] : names;
-  if (!extras) return items;
-  return amountMissing ? [CHANGE_AMOUNT, ...items, ADD_NOTE, DONT_LOG] : [...items, CHANGE_AMOUNT, ADD_NOTE, DONT_LOG];
 }
 
 function matchAccount(accounts, card) {
@@ -450,6 +454,7 @@ async function walletPayment(env, user, body) {
   const parsed = parseAmount(body.amount);
   const account = matchAccount(accounts, card);
   const currency = (parsed && parsed.currency) || (account && account.currency) || user.display_currency;
+  const amount = parsed ? parsed.minor : 0;
   const id = newId();
   const t = now();
   await env.DB.batch([
@@ -457,11 +462,14 @@ async function walletPayment(env, user, body) {
       `INSERT INTO transactions (id, user_id, kind, account_id, amount, currency, merchant, card, source, raw,
          occurred_at, created_at, updated_at)
        VALUES (?, ?, 'expense', ?, ?, ?, ?, ?, 'wallet', ?, ?, ?, ?)`,
-    ).bind(id, user.id, account ? account.id : null, parsed ? parsed.minor : 0, currency, merchant, card,
+    ).bind(id, user.id, account ? account.id : null, amount, currency, merchant, card,
       JSON.stringify(body).slice(0, 2000), t, t, t),
     env.DB.prepare('UPDATE users SET pending_tx_id = ?, pending_ask = NULL WHERE id = ?').bind(id, user.id),
   ]);
-  return json(await menuFor(env, user, merchant, { extras: true, amountMissing: !parsed || parsed.minor === 0 }));
+  const line1 = [amount ? formatMoney(amount, currency) : 'Amount missing', merchant].filter(Boolean).join(' · ');
+  const line2 = account ? account.name : card ? `New card: ${card}` : 'Which account?';
+  const items = (await expenseCategories(env, user)).map((c) => c.name);
+  return json({ title: `${line1}\n${line2}`, items: [...items, EDIT] });
 }
 
 async function pendingTx(env, user) {
@@ -475,40 +483,83 @@ async function walletChoice(env, user, rawChoice) {
   const tx = await pendingTx(env, user);
   if (!tx) return text('');
   const choice = String(rawChoice || '').trim();
-  if (choice === DONT_LOG) {
-    await env.DB.batch([
-      env.DB.prepare('DELETE FROM transactions WHERE id = ?').bind(tx.id),
-      env.DB.prepare('UPDATE users SET pending_tx_id = NULL, pending_ask = NULL WHERE id = ?').bind(user.id),
-    ]);
+  const clearPending = env.DB.prepare('UPDATE users SET pending_tx_id = NULL, pending_ask = NULL WHERE id = ?').bind(user.id);
+  if (choice === DONT_LOG || choice.endsWith('Don’t log this') || choice.endsWith("Don't log this")) {
+    await env.DB.batch([env.DB.prepare('DELETE FROM transactions WHERE id = ?').bind(tx.id), clearPending]);
     return text('');
   }
-  if (choice === CHANGE_AMOUNT || choice === ADD_NOTE) {
-    const ask = choice === CHANGE_AMOUNT ? 'amount' : 'note';
-    await env.DB.prepare('UPDATE users SET pending_ask = ? WHERE id = ?').bind(ask, user.id).run();
-    return text(ask === 'amount' ? 'What amount should be logged?' : 'Add a note');
+  if (choice === EDIT || /edit/i.test(choice)) {
+    const token = randomToken(18);
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM edit_tokens WHERE expires_at < ?').bind(now()),
+      env.DB.prepare('INSERT INTO edit_tokens (token_hash, tx_id, user_id, expires_at) VALUES (?, ?, ?, ?)')
+        .bind(await sha256(token), tx.id, user.id, now() + EDIT_MINUTES * 60_000),
+      clearPending,
+    ]);
+    const appUrl = env.APP_URL || (String(env.APP_ORIGIN || '').split(',')[0] + '/');
+    return text(`${appUrl}#edit=${tx.id}.${token}`);
   }
-  const name = choice.endsWith(USUAL) ? choice.slice(0, -USUAL.length) : choice;
-  const cat = (await expenseCategories(env, user)).find((c) => c.name.toLowerCase() === name.toLowerCase());
+  const cat = (await expenseCategories(env, user)).find((c) => c.name.toLowerCase() === choice.toLowerCase());
   if (!cat) return text('');
   await env.DB.batch([
     env.DB.prepare('UPDATE transactions SET category_id = ?, updated_at = ? WHERE id = ?').bind(cat.id, now(), tx.id),
-    env.DB.prepare('UPDATE users SET pending_tx_id = NULL, pending_ask = NULL WHERE id = ?').bind(user.id),
+    clearPending,
   ]);
-  await rememberMerchant(env, user, tx.merchant, cat.id);
   return text('');
 }
 
-async function walletAnswer(env, user, answer) {
-  const tx = await pendingTx(env, user);
-  if (tx && user.pending_ask === 'amount') {
-    const parsed = parseAmount(answer);
-    if (parsed && parsed.minor !== 0) {
-      await env.DB.prepare('UPDATE transactions SET amount = ?, original_amount = COALESCE(original_amount, ?), updated_at = ? WHERE id = ?')
-        .bind(parsed.minor, tx.amount, now(), tx.id).run();
-    }
-  } else if (tx && user.pending_ask === 'note') {
-    await env.DB.prepare('UPDATE transactions SET note = ?, updated_at = ? WHERE id = ?').bind(cleanText(answer, 500), now(), tx.id).run();
-  }
-  await env.DB.prepare('UPDATE users SET pending_ask = NULL WHERE id = ?').bind(user.id).run();
-  return json(await menuFor(env, user, tx && tx.merchant, { extras: false }));
+// ---------- "Edit details…" page (one-time link, no sign-in needed) ----------
+
+async function editAccess(env, body) {
+  const id = String(body.id || '');
+  const token = String(body.token || '');
+  const row = id && token
+    ? await env.DB.prepare('SELECT * FROM edit_tokens WHERE token_hash = ? AND tx_id = ? AND expires_at > ?').bind(await sha256(token), id, now()).first()
+    : null;
+  if (!row) throw new HttpError(403, 'This edit link has expired. Open the app to change the payment there.');
+  const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(row.user_id).first();
+  const tx = await env.DB.prepare('SELECT * FROM transactions WHERE id = ? AND user_id = ?').bind(id, row.user_id).first();
+  if (!user || !tx) throw new HttpError(404, 'That payment no longer exists.');
+  return { user, tx, tokenHash: row.token_hash };
+}
+
+async function editLoad(env, body) {
+  const { user, tx } = await editAccess(env, body);
+  const accounts = (await env.DB.prepare('SELECT id, name, currency FROM accounts WHERE user_id = ? AND archived = 0 ORDER BY sort, created_at').bind(user.id).all()).results;
+  const categories = (await expenseCategories(env, user)).map((c) => ({ id: c.id, name: c.name, icon: c.icon }));
+  return json({
+    transaction: {
+      id: tx.id, amount: tx.amount, currency: tx.currency, merchant: tx.merchant, card: tx.card, note: tx.note,
+      account_id: tx.account_id, category_id: tx.category_id, occurred_at: tx.occurred_at,
+    },
+    accounts,
+    categories,
+  });
+}
+
+async function editSave(env, body) {
+  const { user, tx, tokenHash } = await editAccess(env, body);
+  const account = body.account_id ? await ownAccount(env, user, body.account_id) : null;
+  const cat = await ownCategory(env, user, body.category_id);
+  if (!cat || cat.kind !== 'expense') throw new HttpError(400, 'Choose a category.');
+  const amount = toInt(body.amount);
+  if (amount === null) throw new HttpError(400, 'Enter the amount.');
+  const original = tx.original_amount ?? (amount !== tx.amount ? tx.amount : null);
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE transactions SET amount = ?, original_amount = ?, account_id = ?, merchant = ?, note = ?,
+        category_id = ?, updated_at = ? WHERE id = ?`)
+      .bind(amount, original, account ? account.id : tx.account_id, cleanText(body.merchant, 120), cleanText(body.note, 500), cat.id, now(), tx.id),
+    env.DB.prepare('DELETE FROM edit_tokens WHERE token_hash = ?').bind(tokenHash),
+  ]);
+  if (account && tx.card && account.id !== tx.account_id) await assignCard(env, user, account, tx.card);
+  return json({ ok: true });
+}
+
+async function editDelete(env, body) {
+  const { tx, tokenHash } = await editAccess(env, body);
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM transactions WHERE id = ?').bind(tx.id),
+    env.DB.prepare('DELETE FROM edit_tokens WHERE token_hash = ?').bind(tokenHash),
+  ]);
+  return json({ ok: true });
 }

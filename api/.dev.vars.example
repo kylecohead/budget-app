@@ -2,3 +2,4 @@
 # Passkeys only work from the address the API expects, so local testing uses localhost.
 APP_ORIGIN=http://localhost:8788
 RP_ID=localhost
+APP_URL=http://localhost:8788/

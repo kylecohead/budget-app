@@ -48,6 +48,7 @@ const ICON = {
   transfer: '<path d="M7 7h12l-3-3M17 17H5l3 3"/>',
   question: '<path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.5V14M12 17.5h.01"/>',
   copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h9"/>',
+  card: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18"/>',
   face: '<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M9 9.5v1M15 9.5v1M12 9.5v3.5h-1M9.5 15.5c1.4 1 3.6 1 5 0"/>',
 };
 const CATEGORY_ICONS = ['cart', 'dining', 'social', 'fitness', 'toiletries', 'transport', 'clothing', 'gift', 'health',
@@ -133,6 +134,7 @@ const S = {
   review: null,
   loading: false,
   onboarding: local.get('b.onboarding', false),
+  ep: null,
 };
 
 const user = () => S.boot?.user || {};
@@ -322,7 +324,7 @@ function monthSummary(ym, accountId, cur) {
     return v;
   };
   for (const t of txs) {
-    if (t.kind === 'expense' && (!t.category_id || (t.source === 'wallet' && !t.account_id))) out.needs.push(t);
+    if (t.kind === 'expense' && !t.category_id) out.needs.push(t);
     if (t.kind === 'transfer') {
       if (accountId === 'total') out.transfers += conv(t.amount, t.currency);
       else if (t.account_id === accountId) out.transfers -= conv(t.amount, t.currency);
@@ -373,6 +375,20 @@ function monthSummary(ym, accountId, cur) {
   return out;
 }
 
+// Wallet cards that showed up without a matching account (asked about once, separately from categories)
+function newCards() {
+  const seen = new Map();
+  for (const ym of [S.ym, addMonths(S.ym, -1)]) {
+    for (const t of txList(ym) || []) {
+      if (t.card && !t.account_id && t.kind !== 'transfer') {
+        const k = t.card.toLowerCase();
+        seen.set(k, { card: t.card, count: (seen.get(k)?.count || 0) + 1 });
+      }
+    }
+  }
+  return [...seen.values()];
+}
+
 // ---------------------------------------------------------------- rendering
 
 // The big figure always stays on one line: longer amounts get a smaller size.
@@ -387,6 +403,11 @@ const route = () => (location.hash || '#overview').slice(1);
 function render() {
   const app = $('#app');
   const bar = $('#tabbar');
+  if (S.ep) {
+    bar.hidden = true;
+    app.innerHTML = editPageView();
+    return;
+  }
   if (!S.token) {
     bar.hidden = true;
     app.innerHTML = API ? welcomeView() : notConfiguredView();
@@ -483,13 +504,20 @@ function overviewView() {
   const days = sum.isNow ? `<span class="caption" style="font-size:15px">${sum.daysLeft === 1 ? 'Last day' : sum.daysLeft + ' days left'}</span>` : '';
   let html = monthBar(days) + accountChips() + heroView(sum, cur);
 
-  const transfersLabel = S.account === 'total' ? 'Transfers' : 'Transfers in/out';
+  const transfersLabel = 'Transfers';
   html += `<section class="stats" aria-label="Money in and out">
     <div class="stat"><span class="caption">Income</span><b>${money(sum.income, cur, { cents: false })}</b></div>
     <div class="stat"><span class="caption">${S.account === 'total' || sum.totalBudget ? 'Saved' : 'Spent'}</span><b>${money(S.account === 'total' || sum.totalBudget ? sum.income - sum.spent : sum.spent, cur, { cents: false })}</b></div>
     <div class="stat"><span class="caption">${transfersLabel}</span><b>${money(sum.transfers, cur, { cents: false, sign: S.account !== 'total' && sum.transfers > 0 })}</b></div>
   </section>`;
 
+  for (const c of newCards().slice(0, 3)) {
+    html += `<section class="newcard" aria-label="New card">
+      <div class="newcard-top"><span class="ico" aria-hidden="true">${icon('card', 's')}</span>
+        <span class="grow"><b>New card: “${esc(c.card)}”</b><small>Which account is it? You only answer this once.</small></span></div>
+      <div class="btn-row">${accounts().map((a) => `<button class="btn soft" data-action="assign-card" data-card="${esc(c.card)}" data-id="${a.id}">${esc(a.name)}</button>`).join('')}</div>
+    </section>`;
+  }
   if (sum.needs.length) {
     html += `<div class="banner"><p>${sum.needs.length === 1 ? '1 payment needs' : sum.needs.length + ' payments need'} a category</p>
       <button class="pill-btn" data-action="review">Review</button></div>`;
@@ -550,7 +578,7 @@ function heroView(sum, cur) {
         <div class="legend">${parts.map(([id, v], i) => {
           const acc = accountById(id);
           const own = acc && acc.currency !== cur ? convert(v, cur, acc.currency) : null;
-          return `<span><i style="background:${shades[Math.min(i, 3)]}"></i>${esc(acc ? acc.name : 'No account yet')} ${own !== null ? money(own, acc.currency, { cents: false }) : money(v, cur, { cents: false })}</span>`;
+          return `<span><i style="background:${shades[Math.min(i, 3)]}"></i>${esc(acc ? acc.name : 'New card')} ${own !== null ? money(own, acc.currency, { cents: false }) : money(v, cur, { cents: false })}</span>`;
         }).join('')}</div>`;
     }
   }
@@ -602,7 +630,7 @@ function txRow(t) {
     title = t.merchant || t.note || cat?.name || (t.kind === 'income' ? 'Income' : 'Payment');
     const parts = [needs ? '<span class="warn">Needs a category</span>' : esc(cat?.name || (t.kind === 'income' ? 'Income' : ''))];
     if (acc) parts.push(esc(acc.name));
-    else if (t.card) parts.push(`<span class="warn">Which account? (${esc(t.card)})</span>`);
+    else if (t.card) parts.push(`<span class="warn">New card: ${esc(t.card)}</span>`);
     parts.push(time(t.occurred_at));
     if (t.amount === 0 && t.source === 'wallet') parts.unshift('<span class="warn">Amount missing</span>');
     sub = parts.filter(Boolean).join(' · ');
@@ -617,14 +645,14 @@ function activityView() {
   let rows = txs || [];
   if (S.account !== 'total') rows = rows.filter((t) => t.account_id === S.account || t.to_account_id === S.account);
   const f = S.filter;
-  if (f.kind === 'needs') rows = rows.filter((t) => t.kind === 'expense' && (!t.category_id || (t.source === 'wallet' && !t.account_id)));
+  if (f.kind === 'needs') rows = rows.filter((t) => t.kind === 'expense' && !t.category_id);
   else if (f.kind !== 'all') rows = rows.filter((t) => t.kind === f.kind);
   if (f.category) rows = rows.filter((t) => t.category_id === f.category);
   const cat = f.category ? categoryById(f.category) : null;
   const base = (txs || []).filter((t) => S.account === 'total' || t.account_id === S.account || t.to_account_id === S.account);
   const count = {
     all: base.length,
-    needs: base.filter((t) => t.kind === 'expense' && (!t.category_id || (t.source === 'wallet' && !t.account_id))).length,
+    needs: base.filter((t) => t.kind === 'expense' && !t.category_id).length,
     expense: base.filter((t) => t.kind === 'expense').length,
     income: base.filter((t) => t.kind === 'income').length,
     transfer: base.filter((t) => t.kind === 'transfer').length,
@@ -871,7 +899,7 @@ function renderReview() {
     return;
   }
   const acc = accountById(r.account || t.account_id);
-  const needAcc = !t.account_id;
+  const needAcc = !t.account_id && !t.card && accounts().length > 1;
   openSheet(`${sheetHead(`${r.i + 1} of ${r.ids.length}`)}
     <div class="card" style="gap:4px"><span class="caption">${esc(dayLabel(t.occurred_at))} · ${time(t.occurred_at)}${acc ? ' · ' + esc(acc.name) : ''}</span>
       <span class="h2">${esc(t.merchant || 'Payment')}</span>
@@ -887,9 +915,9 @@ async function reviewPick(categoryId) {
   const r = S.review;
   const t = (txList(S.ym) || []).find((x) => x.id === r.ids[r.i]);
   if (!t) return;
-  const accountId = r.account || t.account_id;
-  if (!accountId && accounts().length > 1) { toast('Choose the account first'); return; }
-  const body = { category_id: categoryId, account_id: accountId || accounts()[0]?.id };
+  const accountId = r.account || t.account_id || (!t.card && accounts().length === 1 ? accounts()[0].id : null);
+  if (!accountId && !t.card && accounts().length > 1) { toast('Choose the account first'); return; }
+  const body = { category_id: categoryId, account_id: accountId };
   try {
     const res = await api('/api/transactions/' + t.id, { method: 'PATCH', body });
     upsertTx(res.transaction);
@@ -993,46 +1021,51 @@ const shortcutLink = () => (S.key ? `${API}/w/${S.key}` : null);
 function describeText(link) {
   return `Run this automatically, without asking or notifying me, whenever I pay with any of my cards in Wallet. `
     + `1) Get contents of URL ${link} using POST with a JSON request body: amount = the transaction's Amount, merchant = the transaction's Merchant, card = the transaction's Card. `
-    + `2) Choose from list using the result. `
-    + `3) Get contents of URL ${link} using POST with JSON body: choice = the chosen item. `
-    + `4) If the result of step 3 has any value: ask for text input using that result as the prompt, then get contents of URL ${link} using POST with JSON body: answer = the provided input, then choose from list using that result, then get contents of URL ${link} using POST with JSON body: choice = the chosen item.`;
+    + `2) Get the dictionary value for "items" from the result, and get the dictionary value for "title" from the same result. `
+    + `3) Choose from list using the items, with the title as the prompt. `
+    + `4) Get contents of URL ${link} using POST with JSON body: choice = the chosen item. `
+    + `5) If the result of step 4 contains "https", open that URL.`;
 }
 
-function openShortcut() {
-  S.key = S.key || local.get('b.key.' + user().id);
+async function openShortcut() {
+  openSheet(`${sheetHead('Apple Pay Shortcut')}<div class="empty"><p>Loading…</p></div>`, 'Apple Pay Shortcut');
+  try { S.key = (await api('/api/shortcut-key')).key || null; } catch (e) { toast(e.message); }
   const link = shortcutLink();
-  const u = user();
   let html = `${sheetHead('Apple Pay Shortcut')}
-    <p style="margin:0;font-size:15px;line-height:21px">When you pay with Apple Pay, a Shortcut on your iPhone sends the amount, shop and card to your personal link. A menu of your categories pops up, and one tap files it.</p>`;
+    <p style="margin:0;font-size:15px;line-height:21px">When you pay with Apple Pay, a Shortcut on your iPhone sends the amount, shop and card to your personal link. A pop-up shows them at the top with your categories below. One tap saves it.</p>`;
   if (!link) {
-    html += u.has_shortcut_key
-      ? `<div class="card"><strong>Your link is already set up</strong><p class="caption" style="margin:0">It isn’t saved on this device. If you need it again, make a new one. The old link stops working, so update your Shortcut with the new one.</p>
-          <button class="btn soft wide" data-action="sc-new">Make a new link</button></div>`
+    html += user().has_shortcut_key
+      ? `<div class="card"><strong>Make a new link</strong><p class="caption" style="margin:0">Your current link was made before the app could show it again. Make a new one and use it in your Shortcut. The old link stops working.</p>
+          <button class="btn primary wide" data-action="sc-new">Make a new link</button></div>`
       : `<button class="btn primary wide" data-action="sc-new">Create my personal link</button>`;
-  } else {
-    html += `<div class="field"><span>Your personal link (keep it private)</span><div class="code">${esc(link)}</div>
-        <div class="btn-row"><button class="btn dark" data-action="copy" data-text="${esc(link)}">${icon('copy', 's')} Copy link</button>
-        <button class="btn soft" data-action="sc-test">Test it</button></div></div>
-      <details class="howto" open><summary>Quickest: let Siri build it</summary><div>
-        <ol class="steps"><li>Tap <b>Copy description</b> below.</li>
-        <li>Open the <b>Shortcuts</b> app, tap <b>+</b> and paste it into “What do you want your shortcut to do?”.</li>
-        <li>Check that the Wallet automation at the top includes all your cards and is switched on, with notifications off. Save it.</li>
-        <li>Pay for something with Apple Pay. If the menu doesn’t look right, use the step-by-step guide instead.</li></ol>
-        <button class="btn soft wide" data-action="copy" data-text="${esc(describeText(link))}">${icon('copy', 's')} Copy description</button></div></details>
-      <details class="howto"><summary>Step by step</summary><div>
-        <ol class="steps">
-          <li>In <b>Shortcuts</b>, make a new shortcut and open the editor (the button with three lines).</li>
-          <li>From the action list, open <b>Automation</b> and add <b>Wallet</b>. Select all your bank cards, switch the automation on and turn off asking and notifying.</li>
-          <li>Add <b>Get Contents of URL</b>. Paste your link. Tap the arrow to show more: Method <b>POST</b>, Request Body <b>JSON</b>. Add three Text fields:
-            <b>amount</b> → Shortcut Input, then tap it and choose <b>Amount</b>; <b>merchant</b> → Shortcut Input › <b>Merchant</b>; <b>card</b> → Shortcut Input › <b>Card</b>.</li>
-          <li>Add <b>Choose from List</b>. It uses the result of the previous step.</li>
-          <li>Add another <b>Get Contents of URL</b> with your link, Method POST, JSON body with one Text field: <b>choice</b> → <b>Chosen Item</b>.</li>
-          <li><i>Optional, for “Change amount” and “Add a note”:</i> add <b>If</b> → <b>Contents of URL</b> <b>has any value</b>. Inside it add <b>Ask for Input</b> (Text, prompt: Contents of URL), then <b>Get Contents of URL</b> (your link, POST, JSON <b>answer</b> → Provided Input), then <b>Choose from List</b>, then <b>Get Contents of URL</b> (your link, POST, JSON <b>choice</b> → Chosen Item).</li>
-          <li>Name it “Log payment” and tap Done.</li>
-        </ol></div></details>
-      <p class="caption" style="margin:0">If Apple Pay sends no amount, the menu starts with “Change amount…”. If a payment slips through, it waits under “Needs a category”.</p>
-      <button class="btn soft wide" data-action="sc-new">Make a new link</button>`;
+    openSheet(html, 'Apple Pay Shortcut');
+    return;
   }
+  html += `<div class="field"><span>Your personal link (keep it private)</span><div class="code">${esc(link)}</div>
+      <div class="btn-row"><button class="btn dark" data-action="copy" data-text="${esc(link)}">${icon('copy', 's')} Copy link</button>
+      <button class="btn soft" data-action="sc-test">Test it</button></div></div>
+    <details class="howto" open><summary>Quickest: let Siri build it</summary><div>
+      <ol class="steps"><li>If you already have a “Log payment” shortcut, delete it first.</li>
+      <li>Tap <b>Copy description</b> below.</li>
+      <li>Open <b>Shortcuts</b>, tap <b>+</b> and paste it into “What do you want your shortcut to do?”.</li>
+      <li>Check the Wallet automation at the top includes all your cards and is switched on, with asking and notifying off. Save it.</li>
+      <li>Pay with Apple Pay. If the pop-up doesn’t show the amount and shop at the top, use the step-by-step guide.</li></ol>
+      <button class="btn soft wide" data-action="copy" data-text="${esc(describeText(link))}">${icon('copy', 's')} Copy description</button></div></details>
+    <details class="howto"><summary>Step by step</summary><div>
+      <ol class="steps">
+        <li>In <b>Shortcuts</b>, make a new shortcut and open the editor (the button with three lines).</li>
+        <li>From the action list, open <b>Automation</b> and add <b>Wallet</b>. Select all your bank cards, switch the automation on and turn off asking and notifying.</li>
+        <li>Add <b>Get Contents of URL</b>. Paste your link. Tap the arrow to show more: Method <b>POST</b>, Request Body <b>JSON</b>. Add three Text fields:
+          <b>amount</b> → Shortcut Input, then tap it and choose <b>Amount</b>; <b>merchant</b> → Shortcut Input › <b>Merchant</b>; <b>card</b> → Shortcut Input › <b>Card</b>.</li>
+        <li>Add <b>Get Dictionary Value</b>: Value for <b>items</b> in <b>Contents of URL</b>.</li>
+        <li>Add another <b>Get Dictionary Value</b>: Value for <b>title</b> in <b>Contents of URL</b> (tap the input and pick Contents of URL, not the step above).</li>
+        <li>Add <b>Choose from List</b>: the list is the first <b>Dictionary Value</b> (items). Tap the arrow and set <b>Prompt</b> to the second Dictionary Value (title).</li>
+        <li>Add <b>Get Contents of URL</b> with your link, Method POST, JSON body with one Text field: <b>choice</b> → <b>Chosen Item</b>.</li>
+        <li>Add <b>If</b> → <b>Contents of URL</b> <b>contains</b> <b>https</b>. Inside it, add <b>Open URLs</b> with <b>Contents of URL</b>.</li>
+        <li>Name it “Log payment” and tap Done.</li>
+      </ol></div></details>
+    <p class="caption" style="margin:0">“→ Edit or don’t log…” at the bottom of the pop-up opens a page where you can fix the amount, account, shop or note before choosing a category, or choose not to log the payment. If a payment slips through, it waits under “Needs a category”.</p>
+    <button class="btn soft wide" data-action="sc-new">Make a new link</button>`;
   openSheet(html, 'Apple Pay Shortcut');
 }
 
@@ -1040,10 +1073,9 @@ async function newShortcutKey() {
   try {
     const { key } = await api('/api/shortcut-key', { method: 'POST', body: {} });
     S.key = key;
-    local.set('b.key.' + user().id, key);
     S.boot.user.has_shortcut_key = true;
     local.set('b.boot', S.boot);
-    openShortcut();
+    await openShortcut();
     render();
   } catch (e) { toast(e.message); }
 }
@@ -1053,6 +1085,67 @@ async function testShortcut() {
     const res = await fetch(shortcutLink());
     toast(await res.text());
   } catch { toast('Couldn’t reach your link. Are you online?'); }
+}
+
+// ----- "Edit details…" page, opened by the Apple Pay pop-up (no sign-in needed)
+
+function startEditPage() {
+  const m = location.hash.match(/^#edit=([\w-]+)\.([\w-]+)$/);
+  if (!m) return false;
+  S.ep = { id: m[1], token: m[2], status: 'loading' };
+  render();
+  api('/e/load', { method: 'POST', body: { id: m[1], token: m[2] } }).then((d) => {
+    const t = d.transaction;
+    Object.assign(S.ep, {
+      status: 'ready', tx: t, accounts: d.accounts, categories: d.categories,
+      amount: minorToInput(t.amount), account_id: t.account_id, merchant: t.merchant || '', note: t.note || '',
+    });
+    render();
+  }).catch((e) => { Object.assign(S.ep, { status: 'error', message: e.message }); render(); });
+  return true;
+}
+
+function editPageView() {
+  const e = S.ep;
+  if (e.status === 'loading') return '<div class="boot">Loading the payment…</div>';
+  if (e.status === 'error' || e.status === 'saved' || e.status === 'deleted') {
+    const title = e.status === 'saved' ? 'Saved' : e.status === 'deleted' ? 'Not logged' : 'Can’t open this';
+    const msg = e.status === 'error' ? e.message : e.message || '';
+    return `<div class="welcome"><div class="done-mark ${e.status === 'error' ? 'bad' : ''}" aria-hidden="true">${icon(e.status === 'error' ? 'close' : 'check', 'l')}</div>
+      <div class="section"><h1 class="h1">${title}</h1><p class="lede">${esc(msg)}</p>
+      ${e.status !== 'error' ? '<p class="lede">You can close this tab now.</p>' : ''}</div>
+      <button class="btn soft wide" data-action="ep-open-app">Open Budget</button></div>`;
+  }
+  const cur = e.tx.currency;
+  return `<header class="sheet-head" style="padding-top:8px"><h1 class="h2">Edit details</h1>
+      <button class="icon-btn" data-action="ep-close" aria-label="Close without changes">${icon('close', 's')}</button></header>
+    <label class="amount-input"><span class="cur">${esc(SYMBOL[cur] || cur)}</span>
+      <input data-ep="amount" inputmode="decimal" autocomplete="off" value="${esc(e.amount)}" aria-label="Amount in ${cur}"></label>
+    ${e.tx.card && !e.account_id ? `<p class="caption" style="margin:0">New card “${esc(e.tx.card)}”: choose its account below and the app will remember it.</p>` : ''}
+    <div class="field"><span>Account</span><div class="chips" style="margin:0;padding:0;flex-wrap:wrap">${e.accounts.map((a) =>
+      `<button class="chip" data-action="ep-account" data-id="${a.id}" aria-pressed="${a.id === e.account_id}">${esc(a.name)}</button>`).join('')}</div></div>
+    <div class="grid2">
+      <label class="field"><span>Shop</span><input class="input" data-ep="merchant" value="${esc(e.merchant)}" maxlength="120" autocomplete="off"></label>
+      <label class="field"><span>Note</span><input class="input" data-ep="note" value="${esc(e.note)}" maxlength="500" autocomplete="off" placeholder="Optional"></label>
+    </div>
+    ${e.error ? `<p class="error" role="alert">${esc(e.error)}</p>` : ''}
+    <p style="margin:4px 0 0;font-size:15px;font-weight:600">Tap a category to save</p>
+    <div class="pick">${e.categories.map((c) =>
+      `<button data-action="ep-save" data-id="${c.id}" aria-pressed="${c.id === e.tx.category_id}">${icon(c.icon, 's')}<span>${esc(c.name)}</span></button>`).join('')}</div>
+    <button class="btn wide" style="color:var(--over-text);background:none" data-action="ep-delete">Don’t log this</button>`;
+}
+
+async function editPageSave(categoryId) {
+  const e = S.ep;
+  const amount = parseMoney(e.amount);
+  if (amount === null) { e.error = 'Enter the amount.'; return render(); }
+  try {
+    await api('/e/save', { method: 'POST', body: { id: e.id, token: e.token, amount, account_id: e.account_id, merchant: e.merchant, note: e.note, category_id: categoryId } });
+    const cat = e.categories.find((c) => c.id === categoryId);
+    const acc = e.accounts.find((a) => a.id === e.account_id);
+    Object.assign(e, { status: 'saved', message: [money(amount, e.tx.currency, { cents: true }), cat?.name, acc?.name].filter(Boolean).join(' · ') });
+  } catch (err) { e.error = err.message; }
+  render();
 }
 
 // ----- invites
@@ -1163,6 +1256,29 @@ const actions = {
   'name-save': async () => {
     try { const { user: u } = await api('/api/me', { method: 'PATCH', body: { name: S.edit.name } }); S.boot.user = { ...S.boot.user, ...u }; local.set('b.boot', S.boot); closeSheet(); render(); } catch (e) { toast(e.message); }
   },
+  'assign-card': async (btn) => {
+    const card = btn.dataset.card; const id = btn.dataset.id;
+    try {
+      await api('/api/cards', { method: 'POST', body: { card, account_id: id } });
+      const a = accountById(id);
+      if (a && !a.cards.some((c) => c.toLowerCase() === card.toLowerCase())) a.cards.push(card);
+      for (const key of Object.keys(S.months)) {
+        S.months[key] = S.months[key].map((t) => (!t.account_id && t.card && t.card.toLowerCase() === card.toLowerCase() ? { ...t, account_id: id } : t));
+        local.set('b.tx.' + key, S.months[key]);
+      }
+      local.set('b.boot', S.boot);
+      toast(`“${card}” is now linked to ${a ? a.name : 'that account'}`);
+      render();
+    } catch (e) { toast(e.message); }
+  },
+  'ep-account': (btn) => { S.ep.account_id = btn.dataset.id; render(); },
+  'ep-save': (btn) => editPageSave(btn.dataset.id),
+  'ep-delete': async () => {
+    try { await api('/e/delete', { method: 'POST', body: { id: S.ep.id, token: S.ep.token } }); Object.assign(S.ep, { status: 'deleted', message: 'This payment won’t be counted.' }); } catch (e) { S.ep.error = e.message; }
+    render();
+  },
+  'ep-close': () => { Object.assign(S.ep, { status: 'saved', message: 'Nothing changed. The payment waits in the app under “Needs a category”.' }); render(); },
+  'ep-open-app': () => { S.ep = null; location.hash = '#overview'; render(); if (S.token) refresh(); },
   'onboarding-done': () => { S.onboarding = false; local.del('b.onboarding'); location.hash = '#overview'; render(); },
   'sign-out': async () => { try { await api('/auth/logout', { method: 'POST', body: {} }); } catch { /* signing out locally anyway */ } signOutLocal(); render(); },
   'delete-me': () => openDeleteMe(),
@@ -1188,6 +1304,8 @@ document.addEventListener('click', (ev) => {
 document.addEventListener('input', (ev) => {
   const k = ev.target.dataset.edit;
   if (k && S.edit) S.edit[k] = ev.target.value;
+  const p = ev.target.dataset.ep;
+  if (p && S.ep) S.ep[p] = ev.target.value;
 });
 
 document.addEventListener('change', async (ev) => {
@@ -1236,13 +1354,19 @@ document.addEventListener('submit', async (ev) => {
 });
 
 sheet().addEventListener('close', () => { S.edit = null; S.review = null; });
-window.addEventListener('hashchange', () => { if (route() !== 'activity') S.filter = { kind: 'all', category: null }; render(); window.scrollTo(0, 0); });
+window.addEventListener('hashchange', () => {
+  if (startEditPage()) return;
+  if (route() !== 'activity') S.filter = { kind: 'all', category: null };
+  render(); window.scrollTo(0, 0);
+});
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refresh(); });
 
 // ---------------------------------------------------------------- start
 
-render();
-if (S.token) refresh();
+if (!startEditPage()) {
+  render();
+  if (S.token) refresh();
+}
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js').catch(() => { /* app still works without it */ });
 }

@@ -49,10 +49,10 @@ When it finishes, it prints your app's address, for example `https://yourname.gi
 4. Go to **Settings → Apple Pay Shortcut → Create my personal link**. Then either:
    - **Quickest (iOS 27):** tap **Copy description**, open Shortcuts, tap **+** and paste it. Siri builds the Shortcut for you.
    - **Step by step:** follow the guide on the same screen.
-5. Pay for something with Apple Pay. The menu lists your categories, with the one you used last time at that shop on top (marked "(usual)"). It also has:
-   - **Change amount…**, for when you paid for a friend who'll pay you back.
-   - **Add a note…**
-   - **Don't log this**
+5. Pay for something with Apple Pay. A pop-up shows the amount, shop and account at the top, with your categories underneath. **One tap on a category saves it.** At the bottom is one extra line:
+   - **→ Edit or don't log…**: opens a page where you can fix the amount, account, shop or note first, for example when you paid for a friend who'll pay you back. That page also has **Don't log this**.
+
+The first time a new card is used, Overview asks once which account it belongs to. That question is separate from "Needs a category".
 
 If a payment slips through, for example because you dismissed the menu or the Wallet trigger didn't fire, it waits in the app under **Needs a category**.
 
@@ -111,6 +111,7 @@ Everything runs on free plans. Cloudflare's free Workers plan allows 100,000 req
 ## If something isn't working
 
 - **The menu doesn't pop up when I pay.** Check that **Settings › Apps › Wallet › Mobile Data** is on, that the Shortcut's Wallet automation is switched on with all your cards selected, and that asking or notifying before running is off. Apple's Wallet trigger is sometimes late or skips a payment. Anything it misses can be added with **+**.
-- **"Amount missing".** Apple Pay sometimes sends no amount. Tap the payment and type it in. Next time, pick **Change amount…** from the menu.
-- **A payment went to the wrong account, or says "Which account?".** Pick the account once. The app remembers that card from then on. You can also add card names under **Settings → Accounts**.
+- **"Amount missing".** Apple Pay sometimes sends no amount. Pick **→ Edit or don't log…** in the pop-up, or tap the payment in the app later, and type it in.
+- **"New card" on Overview.** Apple sent a card name the app hadn't seen before. Tap the account it belongs to. The app remembers it, and moves that card's earlier payments too. You can also add card names under **Settings → Accounts**.
+- **Where's my Shortcut link?** In the app, go to **Settings → Apple Pay Shortcut**.
 - **Passkey errors.** Use Safari and the GitHub Pages address that setup printed. Passkeys only work from that exact address.

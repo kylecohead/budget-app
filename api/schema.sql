@@ -117,3 +117,18 @@ CREATE TABLE IF NOT EXISTS fx_rates (
   rates      TEXT NOT NULL,
   fetched_at INTEGER NOT NULL
 );
+
+-- One-time links for "Edit details…" in the Apple Pay pop-up (valid for 30 minutes).
+CREATE TABLE IF NOT EXISTS edit_tokens (
+  token_hash  TEXT PRIMARY KEY,
+  tx_id       TEXT NOT NULL,
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at  INTEGER NOT NULL
+);
+
+-- Your personal Shortcut link, so Settings can always show it again.
+CREATE TABLE IF NOT EXISTS shortcut_links (
+  user_id     TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  key         TEXT NOT NULL,
+  created_at  INTEGER NOT NULL
+);
