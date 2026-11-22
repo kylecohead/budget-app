@@ -108,11 +108,13 @@ async function route(request, env, url) {
 // ---------- loading everything the app needs in one go ----------
 
 async function bootstrap(env, user) {
-  const [accounts, categories, budgets, rates] = await Promise.all([
+  const [accounts, categories, budgets, rates, shortcutKey, invites] = await Promise.all([
     env.DB.prepare('SELECT * FROM accounts WHERE user_id = ? ORDER BY sort, created_at').bind(user.id).all(),
     env.DB.prepare('SELECT * FROM categories WHERE user_id = ? ORDER BY kind, sort').bind(user.id).all(),
     env.DB.prepare('SELECT account_id, category_id, amount FROM budgets WHERE user_id = ?').bind(user.id).all(),
     getRates(env),
+    env.DB.prepare('SELECT key FROM shortcut_links WHERE user_id = ?').bind(user.id).first('key'),
+    user.is_admin ? inviteRows(env) : Promise.resolve(null),
   ]);
   return json({
     user: publicUser(user),
@@ -120,6 +122,8 @@ async function bootstrap(env, user) {
     categories: categories.results,
     budgets: budgets.results,
     rates,
+    shortcut_key: shortcutKey || null,
+    invites,
   });
 }
 
@@ -379,13 +383,17 @@ async function newShortcutKey(env, user) {
   return json({ key });
 }
 
-async function listInvites(env, user) {
-  if (!user.is_admin) throw new HttpError(403, 'Only the app’s owner can see invites.');
+async function inviteRows(env) {
   const rows = await env.DB.prepare(
     `SELECT i.code, i.created_at, i.used_at, u.name AS used_by_name FROM invites i
      LEFT JOIN users u ON u.id = i.used_by WHERE i.make_admin = 0 ORDER BY i.created_at DESC LIMIT 100`,
   ).all();
-  return json({ invites: rows.results });
+  return rows.results;
+}
+
+async function listInvites(env, user) {
+  if (!user.is_admin) throw new HttpError(403, 'Only the app’s owner can see invites.');
+  return json({ invites: await inviteRows(env) });
 }
 
 async function createInvite(env, user) {

@@ -3,7 +3,11 @@ const VERSION = 'budget-__BUILD__';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'config.js', 'manifest.webmanifest', 'icon.svg', 'apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil(
+    caches.open(VERSION)
+      .then((cache) => cache.addAll(SHELL.map((url) => new Request(url, { cache: 'reload' }))))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener('activate', (event) => {
@@ -23,7 +27,9 @@ self.addEventListener('fetch', (event) => {
     // Show the saved copy straight away and quietly fetch a fresh one for next time.
     event.respondWith(caches.open(VERSION).then(async (cache) => {
       const cached = await cache.match(request, { ignoreSearch: true });
-      const fresh = fetch(request).then((res) => {
+      // ask GitHub for the latest file (a quick check if nothing changed); pages need a plain URL here
+      const latest = request.mode === 'navigate' ? new Request(request.url, { cache: 'no-cache' }) : new Request(request, { cache: 'no-cache' });
+      const fresh = fetch(latest).then((res) => {
         if (res.ok) cache.put(request, res.clone());
         return res;
       }).catch(() => cached);

@@ -1052,8 +1052,7 @@ function describeText(link) {
 }
 
 async function openShortcut() {
-  openSheet(`${sheetHead('Apple Pay Shortcut')}<div class="empty"><p>Loading…</p></div>`, 'Apple Pay Shortcut');
-  try { S.key = (await api('/api/shortcut-key')).key || null; } catch (e) { toast(e.message); }
+  S.key = S.key || S.boot?.shortcut_key || null;
   const link = shortcutLink();
   let html = `${sheetHead('Apple Pay Shortcut')}
     <p style="margin:0;font-size:15px;line-height:21px">When you pay with Apple Pay, a Shortcut on your iPhone sends the amount, shop and card to your personal link. A pop-up shows them at the top with your categories below. One tap saves it.</p>`;
@@ -1097,6 +1096,7 @@ async function newShortcutKey() {
   try {
     const { key } = await api('/api/shortcut-key', { method: 'POST', body: {} });
     S.key = key;
+    S.boot.shortcut_key = key;
     S.boot.user.has_shortcut_key = true;
     local.set('b.boot', S.boot);
     await openShortcut();
@@ -1174,10 +1174,15 @@ async function editPageSave(categoryId) {
 
 // ----- invites
 
-async function openInvites(fresh) {
-  openSheet(`${sheetHead('Invite a friend')}<div class="empty"><p>Loading…</p></div>`, 'Invite a friend');
-  let invites = [];
-  try { invites = (await api('/api/invites')).invites; } catch (e) { toast(e.message); }
+async function openInvites(fresh, refreshed = false) {
+  const invites = S.boot?.invites || [];
+  if (!refreshed && !fresh) {
+    // show what we have now, then quietly bring the list up to date
+    api('/api/invites').then((d) => {
+      S.boot.invites = d.invites; local.set('b.boot', S.boot);
+      if (sheet().open && sheet().getAttribute('aria-label') === 'Invite a friend') openInvites(null, true);
+    }).catch(() => { /* the saved list is fine */ });
+  }
   const msg = fresh ? `Join my budget app: ${APP_URL} and use invite code ${fresh}` : '';
   openSheet(`${sheetHead('Invite a friend')}
     <p style="margin:0;font-size:15px;line-height:21px">Each code works once. Your friend gets their own private budget. They can’t see yours, and you can’t see theirs in the app.</p>
@@ -1287,7 +1292,14 @@ const actions = {
   'sc-new': () => newShortcutKey(),
   'sc-test': () => testShortcut(),
   invites: () => openInvites(null),
-  'invite-new': async () => { try { const { invite } = await api('/api/invites', { method: 'POST', body: {} }); openInvites(invite.code); } catch (e) { toast(e.message); } },
+  'invite-new': async (btn) => {
+    btn.disabled = true; btn.textContent = 'Creating…';
+    try {
+      const { invite } = await api('/api/invites', { method: 'POST', body: {} });
+      S.boot.invites = [invite, ...(S.boot.invites || [])]; local.set('b.boot', S.boot);
+      openInvites(invite.code, true);
+    } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = 'Create an invite code'; }
+  },
   copy: (btn) => copy(btn.dataset.text),
   'edit-name': () => openName(),
   'name-save': async () => {
@@ -1396,7 +1408,11 @@ window.addEventListener('hashchange', () => {
   if (route() !== 'activity') S.filter = { kind: 'all', category: null };
   render(); window.scrollTo(0, 0);
 });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refresh(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  refresh();
+  navigator.serviceWorker?.getRegistration().then((r) => r && r.update()).catch(() => {});
+});
 
 // ---------------------------------------------------------------- start
 
@@ -1405,5 +1421,12 @@ if (!startEditPage()) {
   if (S.token) refresh();
 }
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  const hadVersion = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.register('sw.js').catch(() => { /* app still works without it */ });
+  // when a new version has been downloaded, switch to it straight away (unless you're in the middle of something)
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadVersion) return;
+    if (sheet().open) { sheet().addEventListener('close', () => location.reload(), { once: true }); return; }
+    location.reload();
+  });
 }
