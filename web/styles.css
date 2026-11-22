@@ -26,7 +26,8 @@
   --sheen: rgba(255, 255, 255, 0.45);
   --active-tab: rgba(255, 255, 255, 0.6);
   --shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
-  --scrim: rgba(10, 10, 20, 0.36);
+  --scrim: rgba(0, 0, 0, 0.6);
+  --sheet: #EFF0F3;
   --focus: #2B4BF2;
   --r-sm: 12px;
   --r-md: 18px;
@@ -56,7 +57,8 @@
     --sheen: rgba(255, 255, 255, 0.10);
     --active-tab: rgba(255, 255, 255, 0.14);
     --shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
-    --scrim: rgba(0, 0, 0, 0.55);
+    --scrim: rgba(0, 0, 0, 0.78);
+    --sheet: #131316;
     --focus: #8EA2FF;
   }
 }
@@ -344,9 +346,12 @@ details.howto > div { padding: 0 0 16px; display: flex; flex-direction: column; 
 dialog.sheet {
   width: 100%; max-width: 560px; max-height: calc(100dvh - env(safe-area-inset-top) - 24px);
   margin: auto auto 0; padding: 0; border: 0; border-radius: 28px 28px 0 0;
-  background: var(--bg); color: var(--text); overflow: auto; overscroll-behavior: contain;
+  background: var(--sheet); color: var(--text); overflow: auto; overscroll-behavior: contain;
+  box-shadow: 0 -1px 0 var(--line), 0 -12px 40px rgba(0, 0, 0, 0.3);
 }
-dialog.sheet::backdrop { background: var(--scrim); }
+/* the page behind a pop-up goes dark and soft, so it's clearly not in use */
+dialog.sheet::backdrop { background: var(--scrim); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.sub-h { margin: 0; font-size: 17px; line-height: 22px; font-weight: 700; }
 dialog.sheet[open] { animation: up 0.28s var(--ease); }
 @keyframes up { from { transform: translateY(40px); opacity: 0.4; } to { transform: none; opacity: 1; } }
 .sheet-in { display: flex; flex-direction: column; gap: 16px; padding: 12px 20px calc(env(safe-area-inset-bottom) + 24px); }

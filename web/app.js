@@ -700,7 +700,6 @@ function settingsView() {
   const accs = accounts(true);
   const expense = categories('expense');
   const income = categories('income');
-  const hidden = (S.boot?.categories || []).filter((c) => c.archived);
   const rates = S.boot?.rates;
   return `<h1 class="h1" style="padding-top:8px">Settings</h1>
   <section class="section"><h2 class="h2">You</h2><div class="group">
@@ -718,18 +717,8 @@ function settingsView() {
     <button class="item add" data-action="edit-account">${icon('plus', 's')} Add an account</button>
   </div></section>
 
-  <section class="section"><h2 class="h2">Categories</h2>
-    <p class="caption" style="margin:0">These appear in the Apple Pay menu in this order.</p>
-    <div class="group">
-    ${expense.map((c, i) => categoryItem(c, i, expense.length)).join('')}
-    <button class="item add" data-action="edit-category" data-kind="expense">${icon('plus', 's')} Add a spending category</button></div>
-    <div class="group">
-    ${income.map((c, i) => categoryItem(c, i, income.length)).join('')}
-    <button class="item add" data-action="edit-category" data-kind="income">${icon('plus', 's')} Add an income category</button></div>
-    ${hidden.length ? `<div class="group">${hidden.map((c) => `<button class="item" data-action="edit-category" data-id="${c.id}"><span class="grow">${esc(c.name)}<small>Hidden</small></span>${icon('right', 's')}</button>`).join('')}</div>` : ''}
-  </section>
-
-  <section class="section"><h2 class="h2">Apple Pay</h2><div class="group">
+  <section class="section"><h2 class="h2">Set up</h2><div class="group">
+    <button class="item" data-action="categories"><span class="grow">Categories<small>${expense.length} spending · ${income.length} income</small></span>${icon('right', 's')}</button>
     <button class="item" data-action="shortcut"><span class="grow">Apple Pay Shortcut<small>${u.has_shortcut_key ? 'Link created' : 'Not set up yet'}</small></span>${icon('right', 's')}</button>
   </div></section>
 
@@ -760,8 +749,9 @@ function openSheet(html, label) {
   d.innerHTML = `<div class="sheet-in"><div class="sheet-grab" aria-hidden="true"></div>${html}</div>`;
   if (!d.open) d.showModal();
 }
-function closeSheet() { const d = sheet(); if (d.open) d.close(); S.edit = null; S.review = null; }
-const sheetHead = (title) => `<div class="sheet-head"><h2>${esc(title)}</h2><button class="icon-btn" data-action="close" aria-label="Close">${icon('close', 's')}</button></div>`;
+function closeSheet() { const d = sheet(); if (d.open) d.close(); S.edit = null; S.review = null; S.returnTo = null; }
+const sheetHead = (title, back = null) => `<div class="sheet-head">${back
+  ? `<button class="icon-btn" data-action="${back.action}" aria-label="Back to ${esc(back.label)}">${icon('left', 's')}</button>` : ''}<h2 style="flex:1">${esc(title)}</h2><button class="icon-btn" data-action="close" aria-label="Close">${icon('close', 's')}</button></div>`;
 
 // ----- add / edit a payment, income or transfer
 
@@ -986,6 +976,24 @@ async function saveAccount() {
 
 // ----- categories
 
+function openCategories() {
+  S.returnTo = 'categories';
+  S.edit = null;
+  const expense = categories('expense');
+  const income = categories('income');
+  const hidden = (S.boot?.categories || []).filter((c) => c.archived);
+  openSheet(`${sheetHead('Categories')}
+    <section class="section"><h3 class="sub-h">Spending</h3>
+      <p class="caption" style="margin:0">These appear in the Apple Pay pop-up in this order.</p>
+      <div class="group">${expense.map((c, i) => categoryItem(c, i, expense.length)).join('')}
+      <button class="item add" data-action="edit-category" data-kind="expense">${icon('plus', 's')} Add a spending category</button></div></section>
+    <section class="section"><h3 class="sub-h">Income</h3>
+      <div class="group">${income.map((c, i) => categoryItem(c, i, income.length)).join('')}
+      <button class="item add" data-action="edit-category" data-kind="income">${icon('plus', 's')} Add an income category</button></div></section>
+    ${hidden.length ? `<section class="section"><h3 class="sub-h">Hidden</h3><div class="group">${hidden.map((c) =>
+      `<button class="item" data-action="edit-category" data-id="${c.id}"><span style="display:grid;place-items:center">${icon(c.icon, 's')}</span><span class="grow">${esc(c.name)}<small>${c.kind === 'income' ? 'Income' : 'Spending'}</small></span>${icon('right', 's')}</button>`).join('')}</div></section>` : ''}`, 'Categories');
+}
+
 function openCategory(id, kind) {
   const c = id ? categoryById(id) : null;
   S.edit = { type: 'category', id: c?.id || null, name: c?.name || '', icon: c?.icon || 'other', kind: c?.kind || kind || 'expense', archived: !!c?.archived, error: null };
@@ -994,7 +1002,7 @@ function openCategory(id, kind) {
 
 function renderCategory() {
   const e = S.edit;
-  openSheet(`${sheetHead(e.id ? 'Category' : 'New category')}
+  openSheet(`${sheetHead(e.id ? 'Category' : 'New category', S.returnTo === 'categories' ? { action: 'categories', label: 'Categories' } : null)}
     <label class="field"><span>Name</span><input class="input" data-edit="name" value="${esc(e.name)}" maxlength="40"></label>
     <div class="field"><span>Icon</span><div class="icons">${CATEGORY_ICONS.map((k) =>
       `<button data-action="cat-icon" data-icon="${k}" aria-pressed="${k === e.icon}" aria-label="${k}">${icon(k)}</button>`).join('')}</div></div>
@@ -1011,7 +1019,7 @@ async function saveCategory(extra = {}) {
     if (e.id) await api('/api/categories/' + e.id, { method: 'PATCH', body: { name: e.name, icon: e.icon, ...extra } });
     else await api('/api/categories', { method: 'POST', body: { name: e.name, icon: e.icon, kind: e.kind } });
     await loadBoot();
-    closeSheet();
+    if (S.returnTo === 'categories') openCategories(); else closeSheet();
     toast('Saved');
     render();
   } catch (err) { e.error = err.message; renderCategory(); }
@@ -1026,6 +1034,7 @@ async function moveCategory(id, n) {
   [list[i], list[j]] = [list[j], list[i]];
   list.forEach((x, k) => { x.sort = k; });
   render();
+  if (S.returnTo === 'categories' && sheet().open) openCategories();
   try { await api('/api/categories/order', { method: 'POST', body: { ids: list.map((x) => x.id) } }); local.set('b.boot', S.boot); } catch (e) { toast(e.message); }
 }
 
@@ -1268,6 +1277,7 @@ const actions = {
   'ac-archive': async () => {
     try { await api('/api/accounts/' + S.edit.id, { method: 'PATCH', body: { archived: !S.edit.archived } }); await loadBoot(); closeSheet(); render(); } catch (e) { toast(e.message); }
   },
+  categories: () => openCategories(),
   'edit-category': (btn) => openCategory(btn.dataset.id, btn.dataset.kind),
   'cat-icon': (btn) => { S.edit.icon = btn.dataset.icon; renderCategory(); },
   'cat-save': () => saveCategory(),
@@ -1380,7 +1390,7 @@ document.addEventListener('submit', async (ev) => {
   if (btn) btn.disabled = false;
 });
 
-sheet().addEventListener('close', () => { S.edit = null; S.review = null; });
+sheet().addEventListener('close', () => { S.edit = null; S.review = null; S.returnTo = null; });
 window.addEventListener('hashchange', () => {
   if (startEditPage()) return;
   if (route() !== 'activity') S.filter = { kind: 'all', category: null };
