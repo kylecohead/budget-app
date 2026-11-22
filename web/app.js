@@ -493,13 +493,15 @@ function monthBar(extra = '') {
     </div>${extra}</header>`;
 }
 
-function accountChips() {
+// Total or one account, as a menu that only shows the current choice
+function accountMenu() {
   const list = accounts();
   if (list.length < 2) return '';
-  return `<nav class="chips" aria-label="Accounts">
-    <button class="chip" data-action="account" data-id="total" aria-pressed="${S.account === 'total'}">Total</button>
-    ${list.map((a) => `<button class="chip" data-action="account" data-id="${a.id}" aria-pressed="${S.account === a.id}">${esc(a.name)}</button>`).join('')}
-  </nav>`;
+  return `<label class="menu-select"><span class="sr">Account</span>
+    <select data-change="account">
+      <option value="total" ${S.account === 'total' ? 'selected' : ''}>Total</option>
+      ${list.map((a) => `<option value="${a.id}" ${S.account === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}
+    </select></label>`;
 }
 
 function overviewView() {
@@ -509,7 +511,8 @@ function overviewView() {
   const sum = monthSummary(S.ym, S.account, cur);
   const txs = txList(S.ym);
   const days = sum.isNow ? `<span class="caption" style="font-size:15px">${sum.daysLeft === 1 ? 'Last day' : sum.daysLeft + ' days left'}</span>` : '';
-  let html = monthBar(days) + accountChips() + heroView(sum, cur);
+  const menu = accountMenu();
+  let html = monthBar(days) + (menu ? `<div class="filter-row">${menu}</div>` : '') + heroView(sum, cur);
 
   html += `<section class="stats" aria-label="Money in and out">
     <div class="stat"><span class="caption">Income</span><b>${money(sum.income, cur, { cents: false })}</b></div>
@@ -580,7 +583,7 @@ function heroView(sum, cur) {
     ${bigFigure(money(sum.spent, cur, { cents: false }))}
     <span class="hero-sub">${esc(compare || ' ')}</span>
     ${split}
-    ${S.account !== 'total' ? '<span class="hero-note">No budgets for this account yet. Add them in Settings.</span>' : ''}
+    ${S.account !== 'total' ? '<span class="hero-note">No budgets for this account yet. Tap a category below to set one.</span>' : ''}
     ${note}
   </section>`;
 }
@@ -594,7 +597,7 @@ function categoryTiles(sum, cur) {
     const over = budget > 0 && spent > budget;
     const pct = budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0;
     const right = over ? `${money(spent - budget, cur, { cents: false })} over` : budget > 0 ? `${pct}%` : '';
-    return `<button class="tile ${over ? 'over' : ''}" data-action="cat-activity" data-id="${c.id}"
+    return `<button class="tile ${over ? 'over' : ''}" data-action="cat-open" data-id="${c.id}"
       aria-label="${esc(c.name)}: ${esc(money(spent, cur))} spent${budget ? ' of ' + esc(money(budget, cur)) : ''}">
       ${!over && budget ? `<span class="fill" style="width:${pct}%"></span>` : ''}
       <span class="in">
@@ -603,7 +606,7 @@ function categoryTiles(sum, cur) {
       </span></button>`;
   }).join('');
   return `<section class="section" aria-label="Categories">
-    <div class="section-head"><h2 class="h2">Categories</h2>${S.account === 'total' && accounts().length > 1 ? '<span class="caption">Budgets from all accounts</span>' : ''}</div>
+    <div class="section-head"><h2 class="h2">Categories</h2>${!sum.budgets.size ? '<span class="caption">Tap one to set a budget</span>' : S.account === 'total' && accounts().length > 1 ? '<span class="caption">Budgets from all accounts</span>' : ''}</div>
     <div class="tiles">${tiles}</div></section>`;
 }
 
@@ -674,8 +677,9 @@ function activityView() {
     transfer: base.filter((t) => t.kind === 'transfer').length,
   };
   const filters = [['all', 'Everything'], ['needs', 'Needs a category'], ['expense', 'Spending'], ['income', 'Income']];
-  let html = monthBar() + accountChips() + attentionView();
+  let html = monthBar() + attentionView();
   html += `<div class="filter-row">
+    ${accountMenu()}
     <label class="menu-select"><span class="sr">Show</span>
       <select data-change="filter">${filters.map(([k, l]) => `<option value="${k}" ${f.kind === k ? 'selected' : ''}>${l} (${count[k]})</option>`).join('')}</select></label>
     ${cat ? `<button class="chip" data-action="clear-cat" aria-pressed="true">${esc(cat.name)} ${icon('close', 's')}<span class="sr">Remove filter</span></button>` : ''}
@@ -720,6 +724,7 @@ function settingsView() {
   </div></section>
 
   <section class="section"><h2 class="h2">Set up</h2><div class="group">
+    <button class="item" data-action="budgets"><span class="grow">Budgets<small>${budgetCount() ? budgetCount() + ' set' : 'None yet'}</small></span>${icon('right', 's')}</button>
     <button class="item" data-action="categories"><span class="grow">Categories<small>${expense.length} spending · ${income.length} income</small></span>${icon('right', 's')}</button>
     <button class="item" data-action="shortcut"><span class="grow">Apple Pay Shortcut<small>${u.has_shortcut_key ? 'Link created' : 'Not set up yet'}</small></span>${icon('right', 's')}</button>
   </div></section>
@@ -933,6 +938,72 @@ async function reviewPick(categoryId) {
   } catch (e) { toast(e.message); }
 }
 
+// ----- budgets
+
+const budgetCount = () => (S.boot.budgets || []).filter((b) => { const a = accountById(b.account_id); return a && !a.archived; }).length;
+
+function budgetInput(catId, acc, label) {
+  const b = (S.boot.budgets || []).find((x) => x.account_id === acc.id && x.category_id === catId);
+  const id = `bud-${catId}-${acc.id}`;
+  return `<div class="budget-row"><label for="${id}">${label}</label>
+    <span class="money-in"><span aria-hidden="true">${esc((SYMBOL[acc.currency] || acc.currency).trim())}</span>
+    <input class="input" id="${id}" inputmode="decimal" enterkeyhint="done" data-budget="${catId}" data-acc="${acc.id}" value="${esc(minorToInput(b?.amount))}" placeholder="None"></span></div>`;
+}
+
+// One category: what's been spent this month, its monthly budget, and a way to its payments
+function categorySummary(catId) {
+  const c = categoryById(catId);
+  const cur = viewCurrency();
+  const sum = monthSummary(S.ym, S.account, cur);
+  const spent = sum.byCat.get(catId) || 0;
+  const budget = sum.budgets.get(catId) || 0;
+  const over = budget > 0 && spent > budget;
+  const pct = budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0;
+  const right = !budget ? 'No budget yet'
+    : over ? `${money(spent - budget, cur, { cents: false })} over ${money(budget, cur, { cents: false })}`
+      : `${pct}% of ${money(budget, cur, { cents: false })}`;
+  return `<div class="cat-sum ${over ? 'over' : ''}" id="cat-sum">
+    <span class="ico">${icon(c?.icon || 'other', 's')}</span>
+    <span class="grow"><span class="caption">${sum.isNow ? 'Spent so far' : 'Spent in ' + esc(monthShort(S.ym))}${S.account !== 'total' && accounts().length > 1 ? ' · ' + esc(accountById(S.account)?.name || '') : ''}</span>
+      <b>${money(spent, cur, { cents: false })}</b></span>
+    <span class="caption right">${right}</span>
+    ${budget ? `<span class="meter" aria-hidden="true"><span style="width:${over ? 100 : pct}%"></span></span>` : ''}
+  </div>`;
+}
+
+function openCategoryBudget(id) {
+  const c = categoryById(id);
+  if (!c) return;
+  const accs = S.account !== 'total' && accountById(S.account) ? [accountById(S.account)] : accounts();
+  const many = accs.length > 1;
+  openSheet(`${sheetHead(c.name)}
+    ${categorySummary(id)}
+    <h3 class="sub-h">Monthly budget</h3>
+    <div class="group">${accs.map((a) => budgetInput(id, a, many ? esc(a.name) : 'Every month')).join('')}</div>
+    <p class="caption" style="margin:0">${many ? 'Each account has its own budget. ' : ''}Leave it empty for no budget. It saves when you tap away.</p>
+    <button class="btn soft wide" data-action="cat-activity" data-id="${id}">See ${esc(monthShort(S.ym))}’s payments</button>`, c.name);
+}
+
+// Settings › Budgets: every category for one account
+function openBudgets(accId) {
+  S.budgetAcc = accId || (S.account !== 'total' && accountById(S.account) ? S.account : accounts()[0]?.id);
+  renderBudgets();
+}
+
+function renderBudgets() {
+  const accs = accounts();
+  const acc = accountById(S.budgetAcc) || accs[0];
+  if (!acc) {
+    openSheet(`${sheetHead('Budgets')}<div class="empty"><strong>No accounts yet</strong><p>Add an account in Settings first. Budgets belong to an account.</p></div>`, 'Budgets');
+    return;
+  }
+  openSheet(`${sheetHead('Budgets')}
+    <p class="caption" style="margin:0">How much you plan to spend in each category every month. Leave one empty for no budget. Each amount saves when you tap away.</p>
+    ${accs.length > 1 ? `<label class="menu-select"><span class="sr">Account</span><select data-change="budget-acc">${accs.map((a) =>
+      `<option value="${a.id}" ${a.id === acc.id ? 'selected' : ''}>${esc(a.name)} (${a.currency})</option>`).join('')}</select></label>` : ''}
+    <div class="group">${categories('expense').map((c) => budgetInput(c.id, acc, `${icon(c.icon, 's')}${esc(c.name)}`)).join('')}</div>`, 'Budgets');
+}
+
 // ----- accounts
 
 function openAccount(id) {
@@ -954,11 +1025,7 @@ function renderAccount() {
     </div>
     ${e.error ? `<p class="error" role="alert">${esc(e.error)}</p>` : ''}
     <button class="btn primary wide" data-action="ac-save">${e.id ? 'Save' : 'Add account'}</button>
-    ${e.id ? `<section class="section"><h3 class="h2" style="font-size:19px">Monthly budgets</h3>
-      <p class="caption" style="margin:0">In ${e.currency}. Leave a category empty for no budget. Changes save as you go.</p>
-      <div class="group">${categories('expense').map((c) => `<div class="budget-row"><label for="bud-${c.id}">${icon(c.icon, 's')}${esc(c.name)}</label>
-        <input class="input" id="bud-${c.id}" inputmode="decimal" data-budget="${c.id}" value="${esc(minorToInput(budgets.get(c.id)))}" placeholder="—"></div>`).join('')}</div>
-    </section>
+    ${e.id ? `<div class="group"><button class="item" data-action="budgets" data-acc="${e.id}"><span class="grow">Monthly budgets<small>${budgets.size ? budgets.size + ' categor' + (budgets.size === 1 ? 'y' : 'ies') : 'None yet'}</small></span>${icon('right', 's')}</button></div>
     <button class="btn soft wide" data-action="ac-archive">${e.archived ? 'Show this account again' : 'Hide this account'}</button>` : ''}`, e.id ? 'Account' : 'New account');
 }
 
@@ -1233,13 +1300,14 @@ const actions = {
     render();
     loadMonth(S.ym).then(render).catch((e) => toast(e.message));
   },
-  account: (btn) => { S.account = btn.dataset.id; render(); },
   cur: async (btn) => {
     S.cur = btn.dataset.cur; render();
     try { await api('/api/me', { method: 'PATCH', body: { display_currency: S.cur } }); S.boot.user.display_currency = S.cur; local.set('b.boot', S.boot); } catch { /* keeps working locally */ }
   },
   review: () => openReview(),
-  'cat-activity': (btn) => { S.filter = { kind: 'expense', category: btn.dataset.id }; location.hash = '#activity'; },
+  'cat-activity': (btn) => { closeSheet(); S.filter = { kind: 'expense', category: btn.dataset.id }; location.hash = '#activity'; },
+  'cat-open': (btn) => openCategoryBudget(btn.dataset.id),
+  budgets: (btn) => openBudgets(btn.dataset.acc),
   filter: (btn) => { S.filter = { kind: btn.dataset.kind, category: null }; render(); },
   'clear-cat': () => { S.filter.category = null; render(); },
   add: () => openEditor(null),
@@ -1367,15 +1435,23 @@ document.addEventListener('change', async (ev) => {
   if (t.dataset.change === 'display-currency') {
     try { await api('/api/me', { method: 'PATCH', body: { display_currency: t.value } }); S.boot.user.display_currency = t.value; S.cur = t.value; local.set('b.boot', S.boot); toast('Saved'); } catch (e) { toast(e.message); }
   }
-  if (t.dataset.budget && S.edit?.type === 'account') {
+  if (t.dataset.change === 'account') { S.account = t.value; render(); return; }
+  if (t.dataset.change === 'budget-acc') { S.budgetAcc = t.value; renderBudgets(); return; }
+  if (t.dataset.budget && t.dataset.acc) {
+    const accId = t.dataset.acc;
+    const catId = t.dataset.budget;
     const amount = t.value.trim() ? parseMoney(t.value) : null;
+    if (t.value.trim() && amount === null) { toast('That amount doesn’t look right'); return; }
     try {
-      await api('/api/budgets', { method: 'PUT', body: { account_id: S.edit.id, category_id: t.dataset.budget, amount } });
-      S.boot.budgets = (S.boot.budgets || []).filter((b) => !(b.account_id === S.edit.id && b.category_id === t.dataset.budget));
-      if (amount && amount > 0) S.boot.budgets.push({ account_id: S.edit.id, category_id: t.dataset.budget, amount });
+      await api('/api/budgets', { method: 'PUT', body: { account_id: accId, category_id: catId, amount } });
+      S.boot.budgets = (S.boot.budgets || []).filter((b) => !(b.account_id === accId && b.category_id === catId));
+      if (amount && amount > 0) S.boot.budgets.push({ account_id: accId, category_id: catId, amount });
       local.set('b.boot', S.boot);
       t.value = minorToInput(amount);
+      toast(amount ? 'Budget saved' : 'Budget removed');
       render();
+      const head = document.getElementById('cat-sum');
+      if (head) head.outerHTML = categorySummary(catId);
     } catch (e) { toast(e.message); }
   }
 });

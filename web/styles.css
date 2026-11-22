@@ -202,6 +202,8 @@ h1, h2, h3 { margin: 0; }
   border-right: 2px solid var(--text-2); border-bottom: 2px solid var(--text-2); transform: rotate(45deg);
 }
 .menu-select select:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.sheet-in > .menu-select { display: flex; }
+.sheet-in > .menu-select select { width: 100%; }
 
 /* ---------- lists ---------- */
 .list { list-style: none; margin: 0; padding: 0 14px; border-radius: var(--r-lg); background: var(--card); }
@@ -335,7 +337,17 @@ details.howto[open] summary::after { content: '–'; }
 details.howto > div { padding: 0 0 16px; display: flex; flex-direction: column; gap: 12px; }
 .budget-row { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 6px 16px; }
 .budget-row label { flex: 1; display: flex; align-items: center; gap: 8px; font-size: 17px; }
-.budget-row .input { width: 120px; min-height: 40px; padding: 8px 10px; text-align: right; font-variant-numeric: tabular-nums; }
+.budget-row .money-in { display: flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 15px; font-weight: 600; }
+.budget-row .input { width: 120px; min-height: 44px; padding: 8px 12px; text-align: right; font-variant-numeric: tabular-nums; }
+.cat-sum { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 4px 12px; padding: 14px 16px 16px; border-radius: var(--r-lg); background: var(--card); }
+.cat-sum .ico { width: 44px; height: 44px; border-radius: 22px; background: var(--fill); display: grid; place-items: center; }
+.cat-sum .grow { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cat-sum b { font-family: var(--display); font-stretch: 125%; font-weight: 700; font-size: 26px; line-height: 32px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cat-sum .right { text-align: right; align-self: end; padding-bottom: 5px; }
+.cat-sum.over .right { color: var(--over-text); font-weight: 700; }
+.meter { grid-column: 1 / -1; margin-top: 10px; height: 8px; border-radius: 4px; background: var(--fill); overflow: hidden; }
+.meter > span { display: block; height: 100%; border-radius: 4px; background: var(--brand); transition: width 0.5s var(--ease); }
+.cat-sum.over .meter > span { background: var(--over); }
 .tags { display: flex; flex-wrap: wrap; gap: 8px; }
 .tag { display: inline-flex; align-items: center; gap: 4px; height: 36px; padding: 0 6px 0 12px; border-radius: 18px; background: var(--card-2); font-size: 15px; }
 .tag button { width: 32px; height: 32px; border-radius: 16px; display: grid; place-items: center; color: var(--text-2); }
