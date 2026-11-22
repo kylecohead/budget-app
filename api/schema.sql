@@ -132,3 +132,9 @@ CREATE TABLE IF NOT EXISTS shortcut_links (
   key         TEXT NOT NULL,
   created_at  INTEGER NOT NULL
 );
+
+-- Payments you skipped in "Review": they stay without a category but stop asking.
+CREATE TABLE IF NOT EXISTS skipped (
+  tx_id    TEXT PRIMARY KEY,
+  user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+);

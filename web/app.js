@@ -324,7 +324,7 @@ function monthSummary(ym, accountId, cur) {
     return v;
   };
   for (const t of txs) {
-    if (t.kind === 'expense' && !t.category_id) out.needs.push(t);
+    if (t.kind === 'expense' && !t.category_id && !t.skipped) out.needs.push(t);
     if (t.kind === 'transfer') {
       if (accountId === 'total') out.transfers += conv(t.amount, t.currency);
       else if (t.account_id === accountId) out.transfers -= conv(t.amount, t.currency);
@@ -426,6 +426,11 @@ function render() {
   bar.hidden = false;
   const r = ['activity', 'settings'].includes(route()) ? route() : 'overview';
   for (const a of bar.querySelectorAll('nav a')) a.setAttribute('aria-current', a.getAttribute('href') === '#' + r ? 'page' : 'false');
+  const n = attentionCount();
+  const badge = bar.querySelector('.badge');
+  badge.hidden = !n;
+  badge.textContent = n > 9 ? '9+' : String(n);
+  bar.querySelector('a[href="#activity"]').setAttribute('aria-label', n ? `Activity, ${n} to sort out` : 'Activity');
   app.innerHTML = r === 'activity' ? activityView() : r === 'settings' ? settingsView() : overviewView();
   if (S.offline) app.insertAdjacentHTML('beforeend', '<p class="offline">Offline — showing what was saved on this phone.</p>');
 }
@@ -504,30 +509,16 @@ function overviewView() {
   const days = sum.isNow ? `<span class="caption" style="font-size:15px">${sum.daysLeft === 1 ? 'Last day' : sum.daysLeft + ' days left'}</span>` : '';
   let html = monthBar(days) + accountChips() + heroView(sum, cur);
 
-  const transfersLabel = 'Transfers';
   html += `<section class="stats" aria-label="Money in and out">
     <div class="stat"><span class="caption">Income</span><b>${money(sum.income, cur, { cents: false })}</b></div>
-    <div class="stat"><span class="caption">${S.account === 'total' || sum.totalBudget ? 'Saved' : 'Spent'}</span><b>${money(S.account === 'total' || sum.totalBudget ? sum.income - sum.spent : sum.spent, cur, { cents: false })}</b></div>
-    <div class="stat"><span class="caption">${transfersLabel}</span><b>${money(sum.transfers, cur, { cents: false, sign: S.account !== 'total' && sum.transfers > 0 })}</b></div>
+    <div class="stat"><span class="caption">Spent</span><b>${money(sum.spent, cur, { cents: false })}</b></div>
   </section>`;
-
-  for (const c of newCards().slice(0, 3)) {
-    html += `<section class="newcard" aria-label="New card">
-      <div class="newcard-top"><span class="ico" aria-hidden="true">${icon('card', 's')}</span>
-        <span class="grow"><b>New card: “${esc(c.card)}”</b><small>Which account is it? You only answer this once.</small></span></div>
-      <div class="btn-row">${accounts().map((a) => `<button class="btn soft" data-action="assign-card" data-card="${esc(c.card)}" data-id="${a.id}">${esc(a.name)}</button>`).join('')}</div>
-    </section>`;
-  }
-  if (sum.needs.length) {
-    html += `<div class="banner"><p>${sum.needs.length === 1 ? '1 payment needs' : sum.needs.length + ' payments need'} a category</p>
-      <button class="pill-btn" data-action="review">Review</button></div>`;
-  }
 
   if (txs === null) {
     html += `<div class="empty"><p>Loading this month…</p></div>`;
   } else {
     if (!txs.length) {
-      html += `<div class="empty"><strong>Nothing yet in ${esc(monthShort(S.ym))}</strong><p>Pay with Apple Pay and pick a category, or tap + to add a payment, income or transfer.</p></div>`;
+      html += `<div class="empty"><strong>Nothing yet in ${esc(monthShort(S.ym))}</strong><p>Pay with Apple Pay and pick a category, or tap + to add a payment or income.</p></div>`;
     }
     html += categoryTiles(sum, cur);
   }
@@ -626,9 +617,9 @@ function txRow(t) {
     amt = `<span class="amt">${money(t.amount, t.currency)}</span>`;
   } else {
     const needs = t.kind === 'expense' && !cat;
-    ico = needs ? `<span class="ico q">${icon('question', 's')}</span>` : `<span class="ico">${icon(cat?.icon || 'other', 's')}</span>`;
+    ico = needs && !t.skipped ? `<span class="ico q">${icon('question', 's')}</span>` : needs ? `<span class="ico t">${icon('other', 's')}</span>` : `<span class="ico">${icon(cat?.icon || 'other', 's')}</span>`;
     title = t.merchant || t.note || cat?.name || (t.kind === 'income' ? 'Income' : 'Payment');
-    const parts = [needs ? '<span class="warn">Needs a category</span>' : esc(cat?.name || (t.kind === 'income' ? 'Income' : ''))];
+    const parts = [needs ? (t.skipped ? 'No category' : '<span class="warn">Needs a category</span>') : esc(cat?.name || (t.kind === 'income' ? 'Income' : ''))];
     if (acc) parts.push(esc(acc.name));
     else if (t.card) parts.push(`<span class="warn">New card: ${esc(t.card)}</span>`);
     parts.push(time(t.occurred_at));
@@ -640,25 +631,48 @@ function txRow(t) {
     <span class="main"><span class="title">${esc(title)}</span><span class="sub">${sub}</span></span>${amt}</button></li>`;
 }
 
+// The two questions the app can ask: which account a new card is, and which category a payment is.
+function attentionView() {
+  let html = '';
+  for (const c of newCards().slice(0, 3)) {
+    html += `<section class="newcard" aria-label="New card">
+      <div class="newcard-top"><span class="ico" aria-hidden="true">${icon('card', 's')}</span>
+        <span class="grow"><b>New card: “${esc(c.card)}”</b><small>Which account is it? You only answer this once.</small></span></div>
+      <div class="btn-row">${accounts().map((a) => `<button class="btn soft" data-action="assign-card" data-card="${esc(c.card)}" data-id="${a.id}">${esc(a.name)}</button>`).join('')}</div>
+    </section>`;
+  }
+  const needs = monthSummary(S.ym, 'total', viewCurrency()).needs.length;
+  if (needs) {
+    html += `<div class="banner"><p>${needs === 1 ? '1 payment needs' : needs + ' payments need'} a category</p>
+      <button class="pill-btn" data-action="review">Review</button></div>`;
+  }
+  return html;
+}
+
+function attentionCount() {
+  if (!S.boot) return 0;
+  return newCards().length + monthSummary(S.ym, 'total', viewCurrency()).needs.length;
+}
+
 function activityView() {
   const txs = txList(S.ym);
   let rows = txs || [];
   if (S.account !== 'total') rows = rows.filter((t) => t.account_id === S.account || t.to_account_id === S.account);
   const f = S.filter;
-  if (f.kind === 'needs') rows = rows.filter((t) => t.kind === 'expense' && !t.category_id);
+  if (f.kind === 'needs') rows = rows.filter((t) => t.kind === 'expense' && !t.category_id && !t.skipped);
   else if (f.kind !== 'all') rows = rows.filter((t) => t.kind === f.kind);
   if (f.category) rows = rows.filter((t) => t.category_id === f.category);
   const cat = f.category ? categoryById(f.category) : null;
   const base = (txs || []).filter((t) => S.account === 'total' || t.account_id === S.account || t.to_account_id === S.account);
   const count = {
     all: base.length,
-    needs: base.filter((t) => t.kind === 'expense' && !t.category_id).length,
+    needs: base.filter((t) => t.kind === 'expense' && !t.category_id && !t.skipped).length,
     expense: base.filter((t) => t.kind === 'expense').length,
     income: base.filter((t) => t.kind === 'income').length,
     transfer: base.filter((t) => t.kind === 'transfer').length,
   };
-  const filters = [['all', 'Everything'], ['needs', 'Needs a category'], ['expense', 'Spending'], ['income', 'Income'], ['transfer', 'Transfers']];
-  let html = monthBar() + accountChips();
+  const filters = [['all', 'Everything'], ['needs', 'Needs a category'], ['expense', 'Spending'], ['income', 'Income']];
+  let html = monthBar() + accountChips() + attentionView();
   html += `<div class="filter-row">
     <label class="menu-select"><span class="sr">Show</span>
       <select data-change="filter">${filters.map(([k, l]) => `<option value="${k}" ${f.kind === k ? 'selected' : ''}>${l} (${count[k]})</option>`).join('')}</select></label>
@@ -784,7 +798,7 @@ function renderEditor() {
   const title = e.id ? (e.kind === 'transfer' ? 'Transfer' : e.kind === 'income' ? 'Income' : 'Payment') : 'Add';
   let body = `${sheetHead(title)}
     <div class="seg" role="group" aria-label="Type">
-      ${[['expense', 'Spending'], ['income', 'Income'], ['transfer', 'Transfer']].map(([k, l]) => `<button type="button" data-action="ed-kind" data-kind="${k}" aria-pressed="${e.kind === k}">${l}</button>`).join('')}
+      ${[['expense', 'Spending'], ['income', 'Income'], ...(e.kind === 'transfer' ? [['transfer', 'Transfer']] : [])].map(([k, l]) => `<button type="button" data-action="ed-kind" data-kind="${k}" aria-pressed="${e.kind === k}">${l}</button>`).join('')}
     </div>
     <label class="amount-input"><span class="cur">${esc((SYMBOL[cur] || cur).trim())}</span>
       <input data-edit="amount" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(e.amount)}" aria-label="Amount in ${cur}"></label>
@@ -894,7 +908,7 @@ function renderReview() {
   const all = txList(S.ym) || [];
   const t = all.find((x) => x.id === r.ids[r.i]);
   if (!t) {
-    openSheet(`${sheetHead('All sorted')}<div class="empty"><strong>Every payment has a category.</strong><p>Nice work.</p></div>
+    openSheet(`${sheetHead('All sorted')}<div class="empty"><strong>Nothing left to sort out.</strong><p>Skipped payments stay without a category. You can still give them one from Activity.</p></div>
       <button class="btn primary wide" data-action="close">Done</button>`, 'All sorted');
     return;
   }
@@ -943,7 +957,8 @@ function renderAccount() {
     <label class="field"><span>Currency</span>${currencySelect('currency', e.currency).replace('<select', '<select data-edit="currency"')}</label>
     <div class="field"><span>Apple Pay cards in this account</span>
       <div class="tags">${e.cards.map((c, i) => `<span class="tag">${esc(c)}<button data-action="ac-card-del" data-i="${i}" aria-label="Remove ${esc(c)}">${icon('close', 's')}</button></span>`).join('') || '<span class="caption">None yet. The app learns a card the first time you pick this account for it.</span>'}</div>
-      <div class="btn-row"><input class="input" id="new-card" placeholder="Card name as shown in Wallet" maxlength="80" style="flex:2"><button class="btn soft" data-action="ac-card-add" style="flex:1;min-height:48px">Add</button></div>
+      <label class="caption" for="new-card" style="margin-top:4px">Add a card by its name in the Wallet app</label>
+      <div class="card-add"><input class="input" id="new-card" placeholder="e.g. Black Card" maxlength="80"><button class="btn soft" data-action="ac-card-add">Add</button></div>
     </div>
     ${e.error ? `<p class="error" role="alert">${esc(e.error)}</p>` : ''}
     <button class="btn primary wide" data-action="ac-save">${e.id ? 'Save' : 'Add account'}</button>
@@ -1232,7 +1247,19 @@ const actions = {
   'ed-del-confirm': () => deleteFromEditor(),
   'rv-account': (btn) => { S.review.account = btn.dataset.id; renderReview(); },
   'rv-cat': (btn) => reviewPick(btn.dataset.id),
-  'rv-skip': () => { S.review.i += 1; renderReview(); },
+  'rv-skip': async () => {
+    const id = S.review.ids[S.review.i];
+    S.review.i += 1;
+    renderReview();
+    try {
+      await api('/api/skip', { method: 'POST', body: { id } });
+      for (const key of Object.keys(S.months)) {
+        S.months[key] = S.months[key].map((t) => (t.id === id ? { ...t, skipped: 1 } : t));
+        local.set('b.tx.' + key, S.months[key]);
+      }
+      render();
+    } catch (e) { toast(e.message); }
+  },
   'rv-details': () => { const t = (txList(S.ym) || []).find((x) => x.id === S.review.ids[S.review.i]); if (t) openEditor(t); },
   'edit-account': (btn) => openAccount(btn.dataset.id),
   'ac-card-add': () => { const v = $('#new-card').value.trim(); if (v) { S.edit.cards.push(v); renderAccount(); } },

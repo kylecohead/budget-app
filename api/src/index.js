@@ -93,6 +93,7 @@ async function route(request, env, url) {
       case 'POST transactions': return createTransaction(env, user, body);
       case 'PATCH transactions/:id': return updateTransaction(env, user, id, body);
       case 'DELETE transactions/:id': return deleteTransaction(env, user, id);
+      case 'POST skip': return skipTransaction(env, user, body);
       case 'GET shortcut-key': return getShortcutKey(env, user);
       case 'POST shortcut-key': return newShortcutKey(env, user);
       case 'POST cards': return assignCardRoute(env, user, body);
@@ -139,7 +140,7 @@ async function updateMe(env, user, body) {
 }
 
 async function deleteMe(env, user) {
-  const tables = ['transactions', 'budgets', 'merchant_memory', 'edit_tokens', 'shortcut_links', 'accounts', 'categories', 'sessions', 'credentials'];
+  const tables = ['transactions', 'budgets', 'merchant_memory', 'edit_tokens', 'shortcut_links', 'skipped', 'accounts', 'categories', 'sessions', 'credentials'];
   await env.DB.batch([
     ...tables.map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(user.id)),
     env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id),
@@ -246,10 +247,12 @@ async function listTransactions(env, user, url) {
   const from = toInt(url.searchParams.get('from')) ?? 0;
   const to = toInt(url.searchParams.get('to')) ?? now() + 86_400_000;
   const rows = await env.DB.prepare(
-    `SELECT id, kind, account_id, to_account_id, amount, currency, to_amount, to_currency, category_id,
-            merchant, card, note, source, original_amount, occurred_at, created_at
-     FROM transactions WHERE user_id = ? AND occurred_at >= ? AND occurred_at < ?
-     ORDER BY occurred_at DESC LIMIT 5000`,
+    `SELECT t.id, t.kind, t.account_id, t.to_account_id, t.amount, t.currency, t.to_amount, t.to_currency, t.category_id,
+            t.merchant, t.card, t.note, t.source, t.original_amount, t.occurred_at, t.created_at,
+            CASE WHEN s.tx_id IS NULL THEN 0 ELSE 1 END AS skipped
+     FROM transactions t LEFT JOIN skipped s ON s.tx_id = t.id
+     WHERE t.user_id = ? AND t.occurred_at >= ? AND t.occurred_at < ?
+     ORDER BY t.occurred_at DESC LIMIT 5000`,
   ).bind(user.id, from, to).all();
   return json({ transactions: rows.results });
 }
@@ -345,6 +348,13 @@ async function updateTransaction(env, user, id, body) {
     t.merchant, t.note, original, t.occurred_at, now(), id).run();
   if (account && existing.card && account.id !== existing.account_id) await assignCard(env, user, account, existing.card);
   return json({ transaction: { ...existing, ...t, original_amount: original } });
+}
+
+async function skipTransaction(env, user, body) {
+  const tx = await env.DB.prepare('SELECT id FROM transactions WHERE id = ? AND user_id = ?').bind(String(body.id || ''), user.id).first();
+  if (!tx) throw new HttpError(404, 'That payment no longer exists.');
+  await env.DB.prepare('INSERT OR IGNORE INTO skipped (tx_id, user_id) VALUES (?, ?)').bind(tx.id, user.id).run();
+  return json({ ok: true });
 }
 
 async function deleteTransaction(env, user, id) {
