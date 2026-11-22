@@ -47,8 +47,8 @@ When it finishes, it prints your app's address, for example `https://yourname.gi
 2. Add your accounts (e.g. Investec ZAR, Discovery ZAR, Bank of America USD), then tap **Done**.
 3. Tap **Share → Add to Home Screen**.
 4. Go to **Settings → Apple Pay Shortcut → Create my personal link**. Then either:
-   - **Quickest (iOS 27):** tap **Copy description**, open Shortcuts, tap **+** and paste it. Siri builds the Shortcut for you.
-   - **Step by step:** follow the guide on the same screen.
+   - **Ask Siri (iOS 27 with Apple Intelligence):** tap **Copy description**, open Shortcuts, tap **+** and paste it. Siri builds the Shortcut and its Wallet automation for you.
+   - **Older iPhone, or no Siri option (iOS 17 or newer):** tap **Install the Shortcut**. Your link is copied first; paste it when Shortcuts asks. Then make the Wallet automation: Shortcuts › Automation › **+** › Wallet (or Transaction), select all your cards, **Run Immediately**, Next › **New Blank Automation** › add **Run Shortcut** › **Log payment**, tap the arrow and set Input to **Shortcut Input**. Apple doesn't let a shared Shortcut bring its automation along before iOS 27, so these taps can't be skipped.
 5. Pay for something with Apple Pay. A pop-up shows the amount, shop and account at the top, with your categories underneath. **One tap on a category saves it.** At the bottom is one extra line:
    - **→ Edit or don't log…**: opens a page where you can fix the amount, account, shop or note first, for example when you paid for a friend who'll pay you back. That page also has **Don't log this**.
 
@@ -100,6 +100,8 @@ web/
   index.html  styles.css  app.js     the whole app
   sw.js                              keeps the app on the phone so it opens instantly
   config.js                          the API's address (written by setup.sh)
+  log-payment.shortcut               the ready-made Apple Pay Shortcut (signed by setup.sh)
+shortcut/log-payment-unsigned.shortcut   that Shortcut before signing (made by tools/make-shortcut.py)
 setup.sh                             one-command setup and deploy
 .github/workflows/pages.yml          publishes web/ to GitHub Pages
 ```
@@ -114,4 +116,5 @@ Everything runs on free plans. Cloudflare's free Workers plan allows 100,000 req
 - **"Amount missing".** Apple Pay sometimes sends no amount. Pick **→ Edit or don't log…** in the pop-up, or tap the payment in the app later, and type it in.
 - **"New card" in Activity.** Apple sent a card name the app hadn't seen before. Tap the account it belongs to. The app remembers it, and moves that card's earlier payments too. You can also add card names under **Settings → Accounts**.
 - **Where's my Shortcut link?** In the app, go to **Settings → Apple Pay Shortcut**.
+- **"The ready-made Shortcut isn't published yet."** `setup.sh` signs `shortcut/log-payment-unsigned.shortcut` into `web/log-payment.shortcut` with macOS's `shortcuts sign`, which needs your Mac signed in to iCloud. Sign in, then run `./setup.sh` again. To change what the Shortcut does, edit `tools/make-shortcut.py`, run `python3 tools/make-shortcut.py`, then `./setup.sh`.
 - **Passkey errors.** Use Safari and the GitHub Pages address that setup printed. Passkeys only work from that exact address.

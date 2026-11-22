@@ -1,7 +1,7 @@
 // Budget API — runs on Cloudflare Workers with a D1 database.
 import {
   HttpError, json, text, readJson, now, newId, randomToken, sha256, inviteCode,
-  cleanCurrency, cleanText, parseAmount, toInt, formatMoney,
+  cleanCurrency, cleanText, parseAmount, amountFromText, toInt, formatMoney,
 } from './util.js';
 import {
   registerOptions, registerVerify, loginOptions, loginVerify, logout,
@@ -469,7 +469,8 @@ async function walletPayment(env, user, body) {
   const accounts = (await env.DB.prepare('SELECT * FROM accounts WHERE user_id = ? AND archived = 0').bind(user.id).all()).results;
   const card = cleanText(body.card, 80);
   const merchant = cleanText(body.merchant, 120) || cleanText(body.name, 120);
-  const parsed = parseAmount(body.amount);
+  // the ready-made Shortcut also sends the whole payment as text (raw), in case iOS doesn't pass its fields
+  const parsed = parseAmount(body.amount) || amountFromText(body.raw);
   const account = matchAccount(accounts, card);
   const currency = (parsed && parsed.currency) || (account && account.currency) || user.display_currency;
   const amount = parsed ? parsed.minor : 0;

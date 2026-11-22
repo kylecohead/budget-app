@@ -86,6 +86,16 @@ const SYMBOLS = [
 
 // Turns whatever the iPhone sends ("R45,00", "R 1 234,50", "$12.50", "ZAR 45.00", 45.5)
 // into { minor: 4550, currency: 'ZAR' | null }. Returns null when there is no number.
+// Finds a money amount inside longer text, e.g. a Wallet payment turned into text. Only an
+// amount written next to a currency sign or code counts, so card digits are never mistaken for it.
+export function amountFromText(input) {
+  if (typeof input !== 'string' || !input) return null;
+  const codes = CURRENCIES.join('|');
+  const re = new RegExp(`(?:\\b(?:${codes})|\\bR|\\$|€|£|¥|₹)\\s?[-−]?\\d(?:[\\d.,\\s\\u00a0']*\\d)?|[-−]?\\d(?:[\\d.,\\s\\u00a0']*\\d)?\\s?(?:(?:${codes})\\b|€)`);
+  const m = input.match(re);
+  return m ? parseAmount(m[0].trim()) : null;
+}
+
 export function parseAmount(input) {
   if (input === null || input === undefined) return null;
   if (typeof input === 'number' && Number.isFinite(input)) {

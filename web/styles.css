@@ -289,6 +289,7 @@ textarea.input { min-height: 80px; resize: vertical; }
 .btn.soft { background: var(--card-2); }
 .btn.danger { background: var(--over); color: var(--on-over); }
 .btn.wide { width: 100%; }
+a.btn { text-decoration: none; -webkit-touch-callout: none; }
 .btn:disabled { opacity: 0.5; cursor: default; }
 .btn-row { display: flex; gap: 10px; }
 .btn-row > * { flex: 1; }

@@ -3,6 +3,7 @@
 
 const CONFIG = window.BUDGET_CONFIG || {};
 const API = String(CONFIG.api || '').replace(/\/$/, '');
+const SHORTCUT_FILE = CONFIG.shortcutFile === true; // setup.sh signed web/log-payment.shortcut
 const APP_URL = location.origin + location.pathname.replace(/index\.html$/, '');
 
 // ---------------------------------------------------------------- helpers
@@ -49,6 +50,7 @@ const ICON = {
   question: '<path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.5V14M12 17.5h.01"/>',
   copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h9"/>',
   card: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18"/>',
+  download: '<path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/>',
   face: '<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M9 9.5v1M15 9.5v1M12 9.5v3.5h-1M9.5 15.5c1.4 1 3.6 1 5 0"/>',
 };
 const CATEGORY_ICONS = ['cart', 'dining', 'social', 'fitness', 'toiletries', 'transport', 'clothing', 'gift', 'health',
@@ -1067,27 +1069,19 @@ async function openShortcut() {
   html += `<div class="field"><span>Your personal link (keep it private)</span><div class="code">${esc(link)}</div>
       <div class="btn-row"><button class="btn dark" data-action="copy" data-text="${esc(link)}">${icon('copy', 's')} Copy link</button>
       <button class="btn soft" data-action="sc-test">Test it</button></div></div>
-    <details class="howto" open><summary>Quickest: let Siri build it</summary><div>
-      <ol class="steps"><li>If you already have a “Log payment” shortcut, delete it first.</li>
-      <li>Tap <b>Copy description</b> below.</li>
-      <li>Open <b>Shortcuts</b>, tap <b>+</b> and paste it into “What do you want your shortcut to do?”.</li>
-      <li>Check the Wallet automation at the top includes all your cards and is switched on, with asking and notifying off. Save it.</li>
-      <li>Pay with Apple Pay. If the pop-up doesn’t show the amount and shop at the top, use the step-by-step guide.</li></ol>
+    <details class="howto" ${SHORTCUT_FILE ? '' : 'open'}><summary>Ask Siri (iOS 27 with Apple Intelligence)</summary><div>
+      <ol class="steps"><li>Tap <b>Copy description</b>.</li>
+      <li>Open <b>Shortcuts</b>, tap <b>+</b> and paste it where it asks what your shortcut should do.</li>
+      <li>Check its Wallet automation includes all your cards, then tap <b>Done</b>.</li></ol>
       <button class="btn soft wide" data-action="copy" data-text="${esc(describeText(link))}">${icon('copy', 's')} Copy description</button></div></details>
-    <details class="howto"><summary>Step by step</summary><div>
-      <ol class="steps">
-        <li>In <b>Shortcuts</b>, make a new shortcut and open the editor (the button with three lines).</li>
-        <li>From the action list, open <b>Automation</b> and add <b>Wallet</b>. Select all your bank cards, switch the automation on and turn off asking and notifying.</li>
-        <li>Add <b>Get Contents of URL</b>. Paste your link. Tap the arrow to show more: Method <b>POST</b>, Request Body <b>JSON</b>. Add three Text fields:
-          <b>amount</b> → Shortcut Input, then tap it and choose <b>Amount</b>; <b>merchant</b> → Shortcut Input › <b>Merchant</b>; <b>card</b> → Shortcut Input › <b>Card</b>.</li>
-        <li>Add <b>Get Dictionary Value</b>: Value for <b>items</b> in <b>Contents of URL</b>.</li>
-        <li>Add another <b>Get Dictionary Value</b>: Value for <b>title</b> in <b>Contents of URL</b> (tap the input and pick Contents of URL, not the step above).</li>
-        <li>Add <b>Choose from List</b>: the list is the first <b>Dictionary Value</b> (items). Tap the arrow and set <b>Prompt</b> to the second Dictionary Value (title).</li>
-        <li>Add <b>Get Contents of URL</b> with your link, Method POST, JSON body with one Text field: <b>choice</b> → <b>Chosen Item</b>.</li>
-        <li>Add <b>If</b> → <b>Contents of URL</b> <b>contains</b> <b>https</b>. Inside it, add <b>Open URLs</b> with <b>Contents of URL</b>.</li>
-        <li>Name it “Log payment” and tap Done.</li>
-      </ol></div></details>
-    <p class="caption" style="margin:0">“→ Edit or don’t log…” at the bottom of the pop-up opens a page where you can fix the amount, account, shop or note before choosing a category, or choose not to log the payment. If a payment slips through, it waits under “Needs a category”.</p>
+    <details class="howto"><summary>Older iPhone, or no Siri option</summary><div>
+      ${SHORTCUT_FILE ? `<ol class="steps"><li>Tap <b>Install the Shortcut</b>. Your link is copied first. Open the download, tap <b>Set Up Shortcut</b>, paste your link and tap <b>Add Shortcut</b>.</li>
+      <li>In <b>Shortcuts</b>, open <b>Automation</b>, tap <b>+</b> and choose <b>Wallet</b> (or <b>Transaction</b>). Select all your cards, choose <b>Run Immediately</b> and tap <b>Next</b>.</li>
+      <li>Tap <b>New Blank Automation</b>, add <b>Run Shortcut</b> and pick <b>Log payment</b>. Tap the arrow beside it and set Input to <b>Shortcut Input</b>.</li></ol>
+      <a class="btn primary wide" href="log-payment.shortcut" download="Log payment.shortcut" data-install="${esc(link)}">${icon('download', 's')} Install the Shortcut</a>`
+      : '<p class="caption" style="margin:0">The ready-made Shortcut isn’t published yet. Run <b>./setup.sh</b> on the Mac that hosts the app, then come back here.</p>'}
+      </div></details>
+    <p class="caption" style="margin:0">“→ Edit or don’t log…” at the bottom of the pop-up lets you fix the amount, account, shop or note first, or skip the payment. If a payment slips through, it waits under “Needs a category”.</p>
     <button class="btn soft wide" data-action="sc-new">Make a new link</button>`;
   openSheet(html, 'Apple Pay Shortcut');
 }
@@ -1340,6 +1334,12 @@ function showAuthError(message) {
 }
 
 document.addEventListener('click', (ev) => {
+  const install = ev.target.closest('[data-install]');
+  if (install) {
+    // copy the personal link, then let the browser download the Shortcut file as normal
+    navigator.clipboard?.writeText(install.dataset.install).then(() => toast('Link copied. Open the download to add the Shortcut.'), () => {});
+    return;
+  }
   const btn = ev.target.closest('[data-action]');
   if (btn && !btn.disabled) {
     ev.preventDefault();

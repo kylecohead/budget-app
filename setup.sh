@@ -88,9 +88,30 @@ fi
 # ------------------------------------------------------------------ GitHub Pages
 bold "6/6  Publishing the app"
 cd "$ROOT"
+# The ready-made Apple Pay Shortcut must be signed by a Mac before an iPhone will install it.
+# Signing needs this Mac to be signed in to iCloud. It only runs again when the Shortcut changes.
+SC_SRC="shortcut/log-payment-unsigned.shortcut"
+SC_OUT="web/log-payment.shortcut"
+SC_STAMP="shortcut/signed-from.sha256"
+SC_TMP="shortcut/.signing.shortcut"
+SC_SHA="$(shasum -a 256 "$SC_SRC" | cut -d' ' -f1)"
+if [ -f "$SC_OUT" ] && [ "$(cat "$SC_STAMP" 2>/dev/null || true)" = "$SC_SHA" ]; then
+  echo "Apple Pay Shortcut is already signed."
+elif command -v shortcuts >/dev/null 2>&1 && shortcuts sign --mode anyone --input "$SC_SRC" --output "$SC_TMP"; then
+  mv "$SC_TMP" "$SC_OUT"
+  echo "$SC_SHA" > "$SC_STAMP"
+  echo "Signed the Apple Pay Shortcut."
+else
+  rm -f "$SC_TMP"
+  echo "Couldn't sign the ready-made Apple Pay Shortcut. Check this Mac is signed in to iCloud"
+  echo "(System Settings › your name), then run ./setup.sh again. Everything else still works."
+fi
+SC_READY=false
+[ -f "$SC_OUT" ] && SC_READY=true
 cat > web/config.js <<EOF
-// Written by setup.sh — the address of your Budget API on Cloudflare.
-window.BUDGET_CONFIG = { api: '$API_URL' };
+// Written by setup.sh — the address of your Budget API on Cloudflare,
+// and whether the signed Apple Pay Shortcut (web/log-payment.shortcut) is ready to install.
+window.BUDGET_CONFIG = { api: '$API_URL', shortcutFile: $SC_READY };
 EOF
 if [ ! -d .git ]; then git init -q -b main; fi
 if [ -z "$(git config user.email || true)" ]; then

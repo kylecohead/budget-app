@@ -23,6 +23,9 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
 
+  // the Shortcut file is a download for the Shortcuts app: leave it to the browser
+  if (url.pathname.endsWith('.shortcut')) return;
+
   if (url.origin === self.location.origin) {
     // Show the saved copy straight away and quietly fetch a fresh one for next time.
     event.respondWith(caches.open(VERSION).then(async (cache) => {
