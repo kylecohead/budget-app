@@ -56,6 +56,8 @@ The first time a new card is used, **Activity** asks once which account it belon
 
 If a payment slips through, for example because you dismissed the menu or the Wallet trigger didn't fire, it waits under **Activity → Needs a category**. Tap **Review** to sort it out, or **Skip** to leave it without a category.
 
+**Declined cards.** iOS runs the Shortcut the moment you tap, even if the card is then declined, and doesn't tell it which happened. If you close the pop-up and pay again within 10 minutes (same amount, same shop, any card), the first try is removed and the new pop-up says "Replaces the same payment from … ago". If you'd already given the declined try a category, it stays: delete it from **Activity**.
+
 Budgets are set per account under **Settings → Accounts**. Leave a category empty for no budget. The **Total** view adds up all accounts and converts them at **today's** exchange rate (European Central Bank rates via Frankfurter).
 
 ## Invite friends

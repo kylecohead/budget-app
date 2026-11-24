@@ -438,6 +438,7 @@ async function getRates(env) {
 // Anything unexpected replies "" so the Shortcut simply ends; the payment stays in the app.
 
 const EDIT = '→ Edit or don’t log…';
+const RETRY_MINUTES = 10; // a repeat of an uncategorised payment within this long replaces it
 const DONT_LOG = 'Don’t log this'; // older Shortcuts only
 const EDIT_MINUTES = 30;
 
@@ -476,7 +477,21 @@ async function walletPayment(env, user, body) {
   const amount = parsed ? parsed.minor : 0;
   const id = newId();
   const t = now();
+  // iOS runs the Shortcut on every tap, even when the card is declined, and can't tell us which it was.
+  // So when the same amount at the same shop comes in again within a few minutes, and the earlier one
+  // was never given a category, the earlier one was the try that didn't go through: remove it.
+  const retried = amount ? (await env.DB.prepare(
+    `SELECT id, created_at FROM transactions
+     WHERE user_id = ? AND source = 'wallet' AND kind = 'expense' AND category_id IS NULL
+       AND amount = ? AND currency = ? AND COALESCE(merchant, '') = ? AND created_at >= ?`,
+  ).bind(user.id, amount, currency, merchant || '', t - RETRY_MINUTES * 60_000).all()).results : [];
+  const gone = retried.map((r) => r.id);
   await env.DB.batch([
+    ...gone.flatMap((txId) => [
+      env.DB.prepare('DELETE FROM edit_tokens WHERE tx_id = ?').bind(txId),
+      env.DB.prepare('DELETE FROM skipped WHERE tx_id = ?').bind(txId),
+      env.DB.prepare('DELETE FROM transactions WHERE id = ? AND user_id = ?').bind(txId, user.id),
+    ]),
     env.DB.prepare(
       `INSERT INTO transactions (id, user_id, kind, account_id, amount, currency, merchant, card, source, raw,
          occurred_at, created_at, updated_at)
@@ -487,8 +502,13 @@ async function walletPayment(env, user, body) {
   ]);
   const line1 = [amount ? formatMoney(amount, currency) : 'Amount missing', merchant].filter(Boolean).join(' · ');
   const line2 = account ? account.name : card ? `New card: ${card}` : 'Which account?';
+  let line3 = '';
+  if (retried.length) {
+    const mins = Math.round((t - Math.max(...retried.map((r) => r.created_at))) / 60_000);
+    line3 = `\nReplaces the same payment from ${mins < 1 ? 'just now' : `${mins} min ago`}`;
+  }
   const items = (await expenseCategories(env, user)).map((c) => c.name);
-  return json({ title: `${line1}\n${line2}`, items: [...items, EDIT] });
+  return json({ title: `${line1}\n${line2}${line3}`, items: [...items, EDIT] });
 }
 
 async function pendingTx(env, user) {
