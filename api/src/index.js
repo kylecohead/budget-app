@@ -7,6 +7,7 @@ import {
   registerOptions, registerVerify, loginOptions, loginVerify, logout,
   userFromSession, userFromShortcutKey,
 } from './auth.js';
+import { FRIENDS_CLOSED, isClosedFor, assertOpen, ClosedError, closedResponse } from './closed.js';
 
 const ICONS = ['cart', 'dining', 'social', 'fitness', 'toiletries', 'transport', 'clothing', 'gift',
   'health', 'home', 'bills', 'travel', 'fun', 'kids', 'pets', 'education', 'salary', 'paidback', 'other'];
@@ -19,9 +20,13 @@ export default {
     try {
       response = await route(request, env, new URL(request.url));
     } catch (e) {
-      if (!(e instanceof HttpError)) console.error(e && e.stack || e);
-      response = json({ error: e instanceof HttpError ? e.message : 'Something went wrong on the server.' },
-        e instanceof HttpError ? e.status : 500);
+      if (e instanceof ClosedError) {
+        response = await closedResponse(env);
+      } else {
+        if (!(e instanceof HttpError)) console.error(e && e.stack || e);
+        response = json({ error: e instanceof HttpError ? e.message : 'Something went wrong on the server.' },
+          e instanceof HttpError ? e.status : 500);
+      }
     }
     for (const [k, v] of Object.entries(cors)) response.headers.set(k, v);
     return response;
@@ -53,6 +58,7 @@ async function route(request, env, url) {
     if (method === 'POST') return wallet(request, env, parts[1]);
     if (method === 'GET') {
       const user = await userFromShortcutKey(env, parts[1]);
+      if (isClosedFor(user)) return text('Budget has closed.', 403);
       return text(user ? `This link works. Payments will be saved for ${user.name}.` : 'This link is not valid.', user ? 200 : 404);
     }
   }
@@ -79,6 +85,7 @@ async function route(request, env, url) {
     const body = ['POST', 'PATCH', 'PUT'].includes(method) ? await readJson(request) : {};
     const [, resource, id] = parts;
     const key = `${method} ${resource}${id ? '/:id' : ''}`;
+    if (key !== 'DELETE me') assertOpen(user); // a friend can still delete their own data
     switch (key) {
       case 'GET bootstrap': return bootstrap(env, user);
       case 'PATCH me': return updateMe(env, user, body);
@@ -124,6 +131,7 @@ async function bootstrap(env, user) {
     rates,
     shortcut_key: shortcutKey || null,
     invites,
+    friends_closed: FRIENDS_CLOSED,
   });
 }
 
@@ -398,6 +406,7 @@ async function listInvites(env, user) {
 
 async function createInvite(env, user) {
   if (!user.is_admin) throw new HttpError(403, 'Only the app’s owner can create invites.');
+  if (FRIENDS_CLOSED) throw new HttpError(403, 'Budget is closed to friends, so new invites are switched off.');
   const code = inviteCode();
   await env.DB.prepare('INSERT INTO invites (code, created_by, make_admin, created_at) VALUES (?, ?, 0, ?)')
     .bind(code, user.id, now()).run();
@@ -446,6 +455,11 @@ async function wallet(request, env, key) {
   const user = await userFromShortcutKey(env, key);
   if (!user) return text('This Shortcut link isn’t valid any more. Copy the new one from the app’s Settings.', 401);
   const body = await readJson(request);
+  if (isClosedFor(user)) {
+    // a friend's Apple Pay Shortcut: show why, log nothing
+    if (body.choice !== undefined) return text('');
+    return json({ title: 'Budget has closed\nPlease delete this automation: Shortcuts › Automation, swipe left on it.', items: ['OK'] });
+  }
   if (body.choice !== undefined) return walletChoice(env, user, body.choice);
   return walletPayment(env, user, body);
 }
@@ -557,6 +571,7 @@ async function editAccess(env, body) {
     : null;
   if (!row) throw new HttpError(403, 'This edit link has expired. Open the app to change the payment there.');
   const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(row.user_id).first();
+  assertOpen(user);
   const tx = await env.DB.prepare('SELECT * FROM transactions WHERE id = ? AND user_id = ?').bind(id, row.user_id).first();
   if (!user || !tx) throw new HttpError(404, 'That payment no longer exists.');
   return { user, tx, tokenHash: row.token_hash };

@@ -6,6 +6,7 @@ import {
   verifyAuthenticationResponse,
 } from '@simplewebauthn/server';
 import { HttpError, json, now, newId, randomToken, sha256, b64url, fromB64url, cleanText } from './util.js';
+import { FRIENDS_CLOSED, ClosedError } from './closed.js';
 
 const SESSION_DAYS = 400;
 const CHALLENGE_MINUTES = 5;
@@ -83,6 +84,7 @@ export async function registerOptions(request, env, body) {
   const name = cleanText(body.name, 60);
   if (!name) throw new HttpError(400, 'Enter your name.');
   const invite = await findInvite(env, body.invite);
+  if (FRIENDS_CLOSED && !invite.make_admin) throw new ClosedError();
   const userId = newId();
   const options = await generateRegistrationOptions({
     rpName: env.RP_NAME || 'Budget',
@@ -100,6 +102,7 @@ export async function registerOptions(request, env, body) {
 export async function registerVerify(request, env, body) {
   const { challenge, data } = await takeChallenge(env, body.challengeId);
   const invite = await findInvite(env, data.invite);
+  if (FRIENDS_CLOSED && !invite.make_admin) throw new ClosedError();
   let verification;
   try {
     verification = await verifyRegistrationResponse({

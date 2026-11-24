@@ -125,6 +125,7 @@ const toLocalInput = (ms) => { const d = new Date(ms); const p = (n) => String(n
 const S = {
   token: local.get('b.token'),
   boot: local.get('b.boot'),
+  closed: local.get('b.closed'), // set when the owner has closed Budget to friends
   ym: nowYM(),
   account: 'total',
   cur: null,
@@ -180,12 +181,43 @@ async function api(path, { method = 'GET', body } = {}) {
     signOutLocal();
     throw new AppError('Please sign in again.', 401);
   }
+  if (res.status === 403 && data.closed) {
+    showClosed(data.error);
+    throw new AppError(data.error, 403);
+  }
   if (!res.ok) throw new AppError(data.error || 'Something went wrong. Please try again.', res.status);
   return data;
 }
 
+// Budget has been closed to friends: forget their saved data on this phone and show the message
+function showClosed(message) {
+  const token = S.token;
+  signOutLocal();
+  S.token = token; // kept only so they can still delete their data
+  if (token) local.set('b.token', token);
+  S.closed = message || 'Budget has closed. Please delete it from your phone.';
+  local.set('b.closed', S.closed);
+  closeSheet();
+  render();
+}
+
+function closedView() {
+  return `<div class="welcome closed">
+    <div class="mark" aria-hidden="true"></div>
+    <div class="section"><h1 class="h1">Budget has closed</h1>
+      <p class="lede">${esc(S.closed)}</p></div>
+    <div class="card"><ol class="steps">
+      <li>Touch and hold the Budget icon on your Home Screen, then delete it.</li>
+      <li>If you set up the Apple Pay Shortcut, open <b>Shortcuts</b>, go to <b>Automation</b> and swipe left on the Wallet automation to delete it.</li>
+    </ol></div>
+    ${S.token ? `<button class="btn soft wide" data-action="delete-me">Delete my data from Budget</button>`
+      : '<p class="caption" style="margin:0">Nothing of yours is saved on this phone.</p>'}
+  </div>`;
+}
+
 async function loadBoot() {
   const data = await api('/api/bootstrap');
+  if (S.closed) { S.closed = null; local.del('b.closed'); } // reopened to friends
   S.boot = data;
   local.set('b.boot', data);
 }
@@ -209,7 +241,7 @@ async function refresh({ quiet = true } = {}) {
     await loadBoot();
     await loadMonth(S.ym);
   } catch (e) {
-    if (!quiet || e.status !== 0) toast(e.message);
+    if (!S.closed && (!quiet || e.status !== 0)) toast(e.message);
   } finally {
     S.loading = false;
     render();
@@ -405,6 +437,11 @@ const route = () => (location.hash || '#overview').slice(1);
 function render() {
   const app = $('#app');
   const bar = $('#tabbar');
+  if (S.closed) {
+    bar.hidden = true;
+    app.innerHTML = closedView();
+    return;
+  }
   if (S.ep) {
     bar.hidden = true;
     app.innerHTML = editPageView();
@@ -729,7 +766,7 @@ function settingsView() {
     <button class="item" data-action="shortcut"><span class="grow">Apple Pay Shortcut<small>${u.has_shortcut_key ? 'Link created' : 'Not set up yet'}</small></span>${icon('right', 's')}</button>
   </div></section>
 
-  ${u.is_admin ? `<section class="section"><h2 class="h2">Friends</h2><div class="group">
+  ${u.is_admin && !S.boot.friends_closed ? `<section class="section"><h2 class="h2">Friends</h2><div class="group">
     <button class="item" data-action="invites"><span class="grow">Invite a friend<small>Each friend gets their own private budget</small></span>${icon('right', 's')}</button>
   </div></section>` : ''}
 
@@ -1393,7 +1430,16 @@ const actions = {
   'onboarding-done': () => { S.onboarding = false; local.del('b.onboarding'); location.hash = '#overview'; render(); },
   'sign-out': async () => { try { await api('/auth/logout', { method: 'POST', body: {} }); } catch { /* signing out locally anyway */ } signOutLocal(); render(); },
   'delete-me': () => openDeleteMe(),
-  'delete-me-confirm': async () => { try { await api('/api/me', { method: 'DELETE' }); signOutLocal(); closeSheet(); render(); } catch (e) { toast(e.message); } },
+  'delete-me-confirm': async () => {
+    try {
+      await api('/api/me', { method: 'DELETE' });
+      const closed = S.closed;
+      signOutLocal();
+      if (closed) { S.closed = closed; local.set('b.closed', closed); }
+      closeSheet(); render();
+      if (closed) toast('Your data has been deleted');
+    } catch (e) { toast(e.message); }
+  },
 };
 
 function showAuthError(message) {
